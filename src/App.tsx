@@ -1362,8 +1362,17 @@ function App() {
               setIsHelpOpen(false)
             }}
           >
-            <div className="modal-panel help-window" onClick={(event) => event.stopPropagation()}>
-              <h3>ショートカット / コマンドヘルプ</h3>
+            <div
+              className="modal-panel help-window"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="help-dialog-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button type="button" autoFocus onClick={() => setIsHelpOpen(false)}>
+                閉じる
+              </button>
+              <h3 id="help-dialog-title">ショートカット / コマンドヘルプ</h3>
               <ul>
                 <li><kbd>Ctrl/Cmd + K</kbd> 検索欄へフォーカス</li>
                 <li><kbd>Ctrl/Cmd + Shift + N</kbd> ルートページ作成</li>
