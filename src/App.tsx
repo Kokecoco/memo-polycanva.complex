@@ -39,6 +39,7 @@ const DB_NAME = 'memo-polycanva'
 const DB_VERSION = 1
 const STORE_NAME = 'workspace'
 const STORE_KEY = 'default'
+const MAX_SEARCH_RESULTS = 20
 let fallbackIdCounter = 0
 
 const defaultContent: PartialBlock[] = [
@@ -234,7 +235,16 @@ function contentToText(raw: string): string {
 }
 
 function formatDateTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleString('ja-JP', {
+  if (!Number.isFinite(timestamp)) {
+    return '不明'
+  }
+
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) {
+    return '不明'
+  }
+
+  return date.toLocaleString('ja-JP', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -673,6 +683,13 @@ function App() {
     [workspace.pages],
   )
 
+  const searchableTextByPageId = useMemo(
+    () => Object.fromEntries(
+      Object.values(workspace.pages).map((page) => [page.id, `${page.title} ${contentToText(page.content)}`.toLowerCase()]),
+    ),
+    [workspace.pages],
+  )
+
   const searchResults = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) {
@@ -685,12 +702,12 @@ function App() {
           return false
         }
 
-        const searchable = `${page.title} ${contentToText(page.content)}`.toLowerCase()
+        const searchable = searchableTextByPageId[page.id] ?? ''
         return searchable.includes(q)
       })
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, 20)
-  }, [searchQuery, workspace.pages])
+      .slice(0, MAX_SEARCH_RESULTS)
+  }, [searchQuery, searchableTextByPageId, workspace.pages])
 
   const activePage = workspace.pages[workspace.selectedPageId]
   const displayedPage = activePage && (showTrash ? activePage.isTrashed : !activePage.isTrashed) ? activePage : null
