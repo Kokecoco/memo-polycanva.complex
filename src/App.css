@@ -4,7 +4,7 @@
 
 .app-layout {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: 320px 1fr;
   min-height: 100vh;
   background: #f7f8fa;
   color: #1f2937;
@@ -17,6 +17,8 @@
   flex-direction: column;
   padding: 12px;
   gap: 12px;
+  max-height: 100vh;
+  overflow: auto;
 }
 
 .sidebar-header {
@@ -37,14 +39,19 @@
 }
 
 .sidebar button,
-.context-menu button {
+.context-menu button,
+.search-box input {
   border: 1px solid #d0d7e2;
   background: #fff;
   border-radius: 8px;
   padding: 6px 10px;
   font-size: 0.85rem;
-  cursor: pointer;
   text-align: left;
+}
+
+.sidebar button,
+.context-menu button {
+  cursor: pointer;
 }
 
 .sidebar button:hover,
@@ -52,15 +59,56 @@
   background: #f3f5f9;
 }
 
+.search-box input {
+  width: 100%;
+}
+
 .hidden-input {
   display: none;
 }
 
+.view-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.view-toggle .active {
+  background: #e2ebff;
+}
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-section h2 {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+.flat-list,
 .page-tree,
 .page-tree ul {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+.flat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.list-item {
+  width: 100%;
+}
+
+.list-item.active {
+  background: #e2ebff;
 }
 
 .page-item {
@@ -93,6 +141,7 @@
 
 .editor-area {
   padding: 24px;
+  overflow: auto;
 }
 
 .editor-header {
@@ -102,6 +151,18 @@
 .editor-header h2 {
   margin: 0;
   font-size: 1.2rem;
+}
+
+.updated-at {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+.muted {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #6b7280;
 }
 
 .context-menu {
