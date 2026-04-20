@@ -877,6 +877,12 @@ function App() {
         return
       }
 
+      if (event.shiftKey && key === 'p' && selectedPage && !selectedPage.isTrashed) {
+        event.preventDefault()
+        togglePin(selectedPage.id)
+        return
+      }
+
       if (!event.shiftKey && key === 'p') {
         event.preventDefault()
         openCommandPalette()
@@ -904,12 +910,6 @@ function App() {
       if (key === 'r' && selectedPage && !selectedPage.isTrashed) {
         event.preventDefault()
         renamePage(selectedPage.id)
-        return
-      }
-
-      if (event.shiftKey && key === 'p' && selectedPage && !selectedPage.isTrashed) {
-        event.preventDefault()
-        togglePin(selectedPage.id)
         return
       }
 
@@ -985,6 +985,10 @@ function App() {
     })
   }, [])
 
+  const openPageContextMenu = useCallback((event: { clientX: number; clientY: number; preventDefault: () => void }, pageId: PageId) => {
+    openContextMenu(event, { kind: 'page', pageId })
+  }, [openContextMenu])
+
   const pageMenuTarget = contextMenu?.target.kind === 'page' ? contextMenu.target : null
   const editorMenuTarget = contextMenu?.target.kind === 'editor' ? contextMenu.target : null
   const editorMenuPageId = editorMenuTarget?.pageId ?? null
@@ -1013,7 +1017,7 @@ function App() {
               setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: pageId }))
             }}
             onContextMenu={(event) => {
-              openContextMenu(event, { kind: 'page', pageId })
+              openPageContextMenu(event, pageId)
             }}
             role="button"
             tabIndex={0}
@@ -1124,7 +1128,7 @@ function App() {
                         setShowTrash(false)
                         setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
                       }}
-                       onContextMenu={(event) => openContextMenu(event, { kind: 'page', pageId: page.id })}
+                       onContextMenu={(event) => openPageContextMenu(event, page.id)}
                     >
                       {page.isPinned ? '📌 ' : ''}
                       {page.title}
@@ -1148,7 +1152,7 @@ function App() {
                         setShowTrash(false)
                         setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
                       }}
-                       onContextMenu={(event) => openContextMenu(event, { kind: 'page', pageId: page.id })}
+                       onContextMenu={(event) => openPageContextMenu(event, page.id)}
                     >
                       📌 {page.title}
                     </button>
@@ -1172,7 +1176,7 @@ function App() {
                         setShowTrash(true)
                         setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
                       }}
-                       onContextMenu={(event) => openContextMenu(event, { kind: 'page', pageId: page.id })}
+                        onContextMenu={(event) => openPageContextMenu(event, page.id)}
                     >
                       🗑️ {page.title}
                     </button>
