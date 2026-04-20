@@ -48,7 +48,6 @@ interface CommandAction {
   tags: string[]
   prefixes?: Array<'/' | '@'>
   disabled?: boolean
-  run: () => void
 }
 
 const DB_NAME = 'memo-polycanva'
@@ -701,7 +700,6 @@ function App() {
         shortcut: 'Ctrl/Cmd + Shift + N',
         tags: ['new', 'root', 'page', 'ルート', '作成'],
         prefixes: ['/'],
-        run: () => addPage(null),
       },
       {
         id: 'create-child',
@@ -711,11 +709,6 @@ function App() {
         tags: ['child', 'sub', '子ページ', '作成'],
         prefixes: ['@'],
         disabled: !canEditSelected,
-        run: () => {
-          if (selectedPage && !selectedPage.isTrashed) {
-            addPage(selectedPage.id)
-          }
-        },
       },
       {
         id: 'rename-page',
@@ -725,11 +718,6 @@ function App() {
         tags: ['rename', 'title', '名前変更', 'ページ名'],
         prefixes: ['@'],
         disabled: !canEditSelected,
-        run: () => {
-          if (selectedPage && !selectedPage.isTrashed) {
-            renamePage(selectedPage.id)
-          }
-        },
       },
       {
         id: 'toggle-pin',
@@ -739,11 +727,6 @@ function App() {
         tags: ['pin', 'favorite', 'ピン', '固定'],
         prefixes: ['@'],
         disabled: !canEditSelected,
-        run: () => {
-          if (selectedPage && !selectedPage.isTrashed) {
-            togglePin(selectedPage.id)
-          }
-        },
       },
       {
         id: 'move-trash',
@@ -753,11 +736,6 @@ function App() {
         tags: ['trash', 'delete', 'ごみ箱', '削除'],
         prefixes: ['@'],
         disabled: !canEditSelected,
-        run: () => {
-          if (selectedPage && !selectedPage.isTrashed) {
-            movePageToTrash(selectedPage.id)
-          }
-        },
       },
       {
         id: 'focus-search',
@@ -766,7 +744,6 @@ function App() {
         shortcut: 'Ctrl/Cmd + K',
         tags: ['search', 'find', '検索'],
         prefixes: ['/'],
-        run: () => searchInputRef.current?.focus(),
       },
       {
         id: 'export-json',
@@ -774,7 +751,6 @@ function App() {
         description: 'ワークスペースをJSON出力します',
         tags: ['export', 'json', 'backup', '出力'],
         prefixes: ['/'],
-        run: () => downloadJson(workspace),
       },
       {
         id: 'import-json',
@@ -782,7 +758,6 @@ function App() {
         description: 'JSONファイルを読み込みます',
         tags: ['import', 'json', '読み込み'],
         prefixes: ['/'],
-        run: () => importInputRef.current?.click(),
       },
       {
         id: 'toggle-trash-view',
@@ -790,7 +765,6 @@ function App() {
         description: '通常表示とごみ箱表示を切り替えます',
         tags: ['trash', 'view', 'ごみ箱', '表示'],
         prefixes: ['/'],
-        run: () => setShowTrash((previous) => !previous),
       },
       {
         id: 'open-help',
@@ -799,10 +773,9 @@ function App() {
         shortcut: 'Ctrl/Cmd + /',
         tags: ['help', 'shortcut', 'コマンド', 'ヘルプ'],
         prefixes: ['/'],
-        run: openHelpWindow,
       },
     ]
-  }, [selectedPage, addPage, renamePage, togglePin, movePageToTrash, workspace, openHelpWindow])
+  }, [selectedPage])
 
   const filteredCommands = useMemo(() => {
     const query = commandQuery.trim().toLowerCase()
@@ -829,10 +802,51 @@ function App() {
   }, [commandActions, commandQuery])
 
   const executeCommand = useCallback((command: CommandAction) => {
-    command.run()
+    switch (command.id) {
+      case 'create-root':
+        addPage(null)
+        break
+      case 'create-child':
+        if (selectedPage && !selectedPage.isTrashed) {
+          addPage(selectedPage.id)
+        }
+        break
+      case 'rename-page':
+        if (selectedPage && !selectedPage.isTrashed) {
+          renamePage(selectedPage.id)
+        }
+        break
+      case 'toggle-pin':
+        if (selectedPage && !selectedPage.isTrashed) {
+          togglePin(selectedPage.id)
+        }
+        break
+      case 'move-trash':
+        if (selectedPage && !selectedPage.isTrashed) {
+          movePageToTrash(selectedPage.id)
+        }
+        break
+      case 'focus-search':
+        searchInputRef.current?.focus()
+        break
+      case 'export-json':
+        downloadJson(workspace)
+        break
+      case 'import-json':
+        importInputRef.current?.click()
+        break
+      case 'toggle-trash-view':
+        setShowTrash((previous) => !previous)
+        break
+      case 'open-help':
+        openHelpWindow()
+        break
+      default:
+        break
+    }
     setIsCommandPaletteOpen(false)
     setCommandQuery('')
-  }, [])
+  }, [addPage, movePageToTrash, openHelpWindow, renamePage, selectedPage, togglePin, workspace])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -970,6 +984,11 @@ function App() {
       y: event.clientY,
     })
   }, [])
+
+  const pageMenuTarget = contextMenu?.target.kind === 'page' ? contextMenu.target : null
+  const editorMenuTarget = contextMenu?.target.kind === 'editor' ? contextMenu.target : null
+  const pageContextPage = pageMenuTarget ? workspace.pages[pageMenuTarget.pageId] : null
+  const editorContextPage = editorMenuTarget?.pageId ? workspace.pages[editorMenuTarget.pageId] : null
 
   function renderPageTree(pageIds: PageId[], depth = 0): ReactNode {
     return pageIds.map((pageId) => {
@@ -1201,31 +1220,31 @@ function App() {
 
         {contextMenu ? (
           <div className="context-menu" style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}>
-            {contextMenu.target.kind === 'page' ? (
-              workspace.pages[contextMenu.target.pageId]?.isTrashed ? (
+            {pageMenuTarget ? (
+              pageContextPage?.isTrashed ? (
                 <>
-                  <button type="button" onClick={() => restorePage(contextMenu.target.pageId)}>
+                  <button type="button" onClick={() => restorePage(pageMenuTarget.pageId)}>
                     復元
                   </button>
-                  <button type="button" className="danger" onClick={() => permanentlyDeletePage(contextMenu.target.pageId)}>
+                  <button type="button" className="danger" onClick={() => permanentlyDeletePage(pageMenuTarget.pageId)}>
                     完全削除
                   </button>
                 </>
               ) : (
                 <>
-                  <button type="button" onClick={() => addPage(contextMenu.target.pageId)}>
+                  <button type="button" onClick={() => addPage(pageMenuTarget.pageId)}>
                     子ページを作成
                   </button>
-                  <button type="button" onClick={() => renamePage(contextMenu.target.pageId)}>
+                  <button type="button" onClick={() => renamePage(pageMenuTarget.pageId)}>
                     名前を変更
                   </button>
-                  <button type="button" onClick={() => togglePin(contextMenu.target.pageId)}>
-                    {workspace.pages[contextMenu.target.pageId]?.isPinned ? 'ピン留め解除' : 'ピン留め'}
+                  <button type="button" onClick={() => togglePin(pageMenuTarget.pageId)}>
+                    {pageContextPage?.isPinned ? 'ピン留め解除' : 'ピン留め'}
                   </button>
-                  <button type="button" onClick={() => movePageToRoot(contextMenu.target.pageId)}>
+                  <button type="button" onClick={() => movePageToRoot(pageMenuTarget.pageId)}>
                     ルートへ移動
                   </button>
-                  <button type="button" className="danger" onClick={() => movePageToTrash(contextMenu.target.pageId)}>
+                  <button type="button" className="danger" onClick={() => movePageToTrash(pageMenuTarget.pageId)}>
                     ごみ箱へ移動
                   </button>
                 </>
@@ -1249,32 +1268,32 @@ function App() {
               </>
             ) : null}
 
-            {contextMenu.target.kind === 'editor' ? (
-              contextMenu.target.pageId ? (
-                workspace.pages[contextMenu.target.pageId]?.isTrashed ? (
+            {editorMenuTarget ? (
+              editorMenuTarget.pageId ? (
+                editorContextPage?.isTrashed ? (
                   <>
-                    <button type="button" onClick={() => restorePage(contextMenu.target.pageId as PageId)}>
+                    <button type="button" onClick={() => restorePage(editorMenuTarget.pageId!)}>
                       復元
                     </button>
-                    <button type="button" className="danger" onClick={() => permanentlyDeletePage(contextMenu.target.pageId as PageId)}>
+                    <button type="button" className="danger" onClick={() => permanentlyDeletePage(editorMenuTarget.pageId!)}>
                       完全削除
                     </button>
                   </>
                 ) : (
                   <>
-                    <button type="button" onClick={() => addPage(contextMenu.target.pageId as PageId)}>
+                    <button type="button" onClick={() => addPage(editorMenuTarget.pageId!)}>
                       子ページを作成
                     </button>
-                    <button type="button" onClick={() => renamePage(contextMenu.target.pageId as PageId)}>
+                    <button type="button" onClick={() => renamePage(editorMenuTarget.pageId!)}>
                       名前を変更
                     </button>
-                    <button type="button" onClick={() => togglePin(contextMenu.target.pageId as PageId)}>
-                      {workspace.pages[contextMenu.target.pageId]?.isPinned ? 'ピン留め解除' : 'ピン留め'}
+                    <button type="button" onClick={() => togglePin(editorMenuTarget.pageId!)}>
+                      {editorContextPage?.isPinned ? 'ピン留め解除' : 'ピン留め'}
                     </button>
                     <button
                       type="button"
                       onClick={() => {
-                        const page = workspace.pages[contextMenu.target.pageId as PageId]
+                        const page = editorContextPage
                         if (page?.parentId) {
                           movePageToRoot(page.id)
                         }
@@ -1282,7 +1301,7 @@ function App() {
                     >
                       ルートへ移動
                     </button>
-                    <button type="button" className="danger" onClick={() => movePageToTrash(contextMenu.target.pageId as PageId)}>
+                    <button type="button" className="danger" onClick={() => movePageToTrash(editorMenuTarget.pageId!)}>
                       ごみ箱へ移動
                     </button>
                   </>
