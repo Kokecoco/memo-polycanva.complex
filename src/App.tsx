@@ -857,6 +857,10 @@ function App() {
         return
       }
 
+      if (isCommandPaletteOpen || isHelpOpen) {
+        return
+      }
+
       if (!event.ctrlKey && !event.metaKey) {
         if ((event.key === '/' || event.key === '@') && !isEditableElement(event.target)) {
           event.preventDefault()
@@ -924,7 +928,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [addPage, movePageToTrash, openCommandPalette, renamePage, selectedPage, togglePin])
+  }, [addPage, isCommandPaletteOpen, isHelpOpen, movePageToTrash, openCommandPalette, renamePage, selectedPage, togglePin])
 
   const nonTrashedRootPageIds = useMemo(
     () => workspace.rootPageIds.filter((rootId) => {
