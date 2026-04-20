@@ -877,7 +877,7 @@ function App() {
         return
       }
 
-      if (key === 'p') {
+      if (!event.shiftKey && key === 'p') {
         event.preventDefault()
         openCommandPalette()
         return
@@ -987,8 +987,9 @@ function App() {
 
   const pageMenuTarget = contextMenu?.target.kind === 'page' ? contextMenu.target : null
   const editorMenuTarget = contextMenu?.target.kind === 'editor' ? contextMenu.target : null
+  const editorMenuPageId = editorMenuTarget?.pageId ?? null
   const pageContextPage = pageMenuTarget ? workspace.pages[pageMenuTarget.pageId] : null
-  const editorContextPage = editorMenuTarget?.pageId ? workspace.pages[editorMenuTarget.pageId] : null
+  const editorContextPage = editorMenuPageId ? workspace.pages[editorMenuPageId] : null
 
   function renderPageTree(pageIds: PageId[], depth = 0): ReactNode {
     return pageIds.map((pageId) => {
@@ -1269,25 +1270,25 @@ function App() {
             ) : null}
 
             {editorMenuTarget ? (
-              editorMenuTarget.pageId ? (
+              editorMenuPageId ? (
                 editorContextPage?.isTrashed ? (
                   <>
-                    <button type="button" onClick={() => restorePage(editorMenuTarget.pageId!)}>
+                    <button type="button" onClick={() => restorePage(editorMenuPageId)}>
                       復元
                     </button>
-                    <button type="button" className="danger" onClick={() => permanentlyDeletePage(editorMenuTarget.pageId!)}>
+                    <button type="button" className="danger" onClick={() => permanentlyDeletePage(editorMenuPageId)}>
                       完全削除
                     </button>
                   </>
                 ) : (
                   <>
-                    <button type="button" onClick={() => addPage(editorMenuTarget.pageId!)}>
+                    <button type="button" onClick={() => addPage(editorMenuPageId)}>
                       子ページを作成
                     </button>
-                    <button type="button" onClick={() => renamePage(editorMenuTarget.pageId!)}>
+                    <button type="button" onClick={() => renamePage(editorMenuPageId)}>
                       名前を変更
                     </button>
-                    <button type="button" onClick={() => togglePin(editorMenuTarget.pageId!)}>
+                    <button type="button" onClick={() => togglePin(editorMenuPageId)}>
                       {editorContextPage?.isPinned ? 'ピン留め解除' : 'ピン留め'}
                     </button>
                     <button
@@ -1301,7 +1302,7 @@ function App() {
                     >
                       ルートへ移動
                     </button>
-                    <button type="button" className="danger" onClick={() => movePageToTrash(editorMenuTarget.pageId!)}>
+                    <button type="button" className="danger" onClick={() => movePageToTrash(editorMenuPageId)}>
                       ごみ箱へ移動
                     </button>
                   </>
