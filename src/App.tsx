@@ -35,6 +35,7 @@ const DB_NAME = 'memo-polycanva'
 const DB_VERSION = 1
 const STORE_NAME = 'workspace'
 const STORE_KEY = 'default'
+let fallbackIdCounter = 0
 
 const defaultContent: PartialBlock[] = [
   {
@@ -44,8 +45,9 @@ const defaultContent: PartialBlock[] = [
 ]
 
 function createPage(parentId: PageId | null = null, title = '新しいページ'): MemoPage {
+  const fallbackId = `${Date.now()}-${Math.round((globalThis.performance?.now?.() ?? 0) * 1000)}-${fallbackIdCounter++}`
   return {
-    id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+    id: globalThis.crypto?.randomUUID?.() ?? fallbackId,
     title,
     parentId,
     childrenIds: [],
@@ -174,11 +176,13 @@ function collectDescendants(pages: Record<PageId, MemoPage>, targetId: PageId): 
 }
 
 function downloadJson(workspace: Workspace): void {
+  const now = new Date()
+  const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
   const blob = new Blob([JSON.stringify(workspace, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `memo-workspace-${new Date().toISOString().replaceAll(':', '-')}.json`
+  link.download = `memo-workspace-${timestamp}.json`
   link.click()
   URL.revokeObjectURL(url)
 }
