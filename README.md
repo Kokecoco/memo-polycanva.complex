@@ -23,3 +23,8 @@ npm run dev
 npm run lint
 npm run build
 ```
+
+## デプロイ
+
+`main` ブランチへの push（または Actions の手動実行）で GitHub Pages にデプロイされます。  
+ワークフロー: `.github/workflows/deploy.yml`
