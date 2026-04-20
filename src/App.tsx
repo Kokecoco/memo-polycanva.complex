@@ -29,10 +29,26 @@ interface Workspace {
   selectedPageId: PageId
 }
 
+type ContextMenuTarget =
+  | { kind: 'page'; pageId: PageId }
+  | { kind: 'sidebar' }
+  | { kind: 'editor'; pageId: PageId | null }
+
 interface ContextMenuState {
-  pageId: PageId
+  target: ContextMenuTarget
   x: number
   y: number
+}
+
+interface CommandAction {
+  id: string
+  label: string
+  description: string
+  shortcut?: string
+  tags: string[]
+  prefixes?: Array<'/' | '@'>
+  disabled?: boolean
+  run: () => void
 }
 
 const DB_NAME = 'memo-polycanva'
@@ -251,6 +267,19 @@ function formatDateTime(timestamp: number): string {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function isEditableElement(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  const tagName = target.tagName
+  return target.isContentEditable
+    || tagName === 'INPUT'
+    || tagName === 'TEXTAREA'
+    || tagName === 'SELECT'
+    || target.closest('[contenteditable="true"]') !== null
 }
 
 function downloadJson(workspace: Workspace): void {
