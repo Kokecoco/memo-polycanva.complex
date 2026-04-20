@@ -871,13 +871,14 @@ function App() {
       }
 
       const key = event.key.toLowerCase()
+      const targetIsEditable = isEditableElement(event.target)
       if (key === 'k') {
         event.preventDefault()
         searchInputRef.current?.focus()
         return
       }
 
-      if (event.shiftKey && key === 'p' && selectedPage && !selectedPage.isTrashed) {
+      if (!targetIsEditable && event.shiftKey && key === 'p' && selectedPage && !selectedPage.isTrashed) {
         event.preventDefault()
         togglePin(selectedPage.id)
         return
@@ -901,19 +902,19 @@ function App() {
         return
       }
 
-      if (key === 'n' && selectedPage && !selectedPage.isTrashed) {
+      if (!targetIsEditable && key === 'n' && selectedPage && !selectedPage.isTrashed) {
         event.preventDefault()
         addPage(selectedPage.id)
         return
       }
 
-      if (key === 'r' && selectedPage && !selectedPage.isTrashed) {
+      if (!targetIsEditable && key === 'r' && selectedPage && !selectedPage.isTrashed) {
         event.preventDefault()
         renamePage(selectedPage.id)
         return
       }
 
-      if ((key === 'backspace' || key === 'delete') && selectedPage && !selectedPage.isTrashed) {
+      if (!targetIsEditable && (key === 'backspace' || key === 'delete') && selectedPage && !selectedPage.isTrashed) {
         event.preventDefault()
         movePageToTrash(selectedPage.id)
       }
@@ -1295,17 +1296,11 @@ function App() {
                     <button type="button" onClick={() => togglePin(editorMenuPageId)}>
                       {editorContextPage?.isPinned ? 'ピン留め解除' : 'ピン留め'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const page = editorContextPage
-                        if (page?.parentId) {
-                          movePageToRoot(page.id)
-                        }
-                      }}
-                    >
-                      ルートへ移動
-                    </button>
+                    {editorContextPage?.parentId ? (
+                      <button type="button" onClick={() => movePageToRoot(editorContextPage.id)}>
+                        ルートへ移動
+                      </button>
+                    ) : null}
                     <button type="button" className="danger" onClick={() => movePageToTrash(editorMenuPageId)}>
                       ごみ箱へ移動
                     </button>
