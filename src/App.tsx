@@ -1736,6 +1736,102 @@ function App() {
                   ルートページ追加
                 </button>
               </div>
+                            <div className="search-box">
+            <input
+              ref={searchInputRef}
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="検索（タイトル＋本文）"
+            />
+              </div>
+
+              <div className="view-toggle">
+            <button type="button" className={!showTrash ? 'active' : ''} onClick={() => setShowTrash(false)}>
+              通常表示
+            </button>
+            <button type="button" className={showTrash ? 'active' : ''} onClick={() => setShowTrash(true)}>
+              ごみ箱 ({trashedPages.length})
+            </button>
+              </div>
+
+              {searchQuery.trim() ? (
+            <section className="sidebar-section">
+              <h2>検索結果</h2>
+              <ul className="flat-list">
+                {searchResults.length === 0 ? <li className="muted">一致するページがありません</li> : null}
+                {searchResults.map((page) => (
+                  <li key={`search-${page.id}`}>
+                    <button
+                      type="button"
+                      className={`list-item${workspace.selectedPageId === page.id && !showTrash ? ' active' : ''}`}
+                      onClick={() => {
+                        setShowTrash(false)
+                        setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
+                      }}
+                       onContextMenu={(event) => openPageContextMenu(event, page.id)}
+                    >
+                      {page.isPinned ? '📌 ' : ''}
+                      {page.title}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+              ) : null}
+
+              {pinnedPages.length > 0 ? (
+            <section className="sidebar-section">
+              <h2>ピン留め</h2>
+              <ul className="flat-list">
+                {pinnedPages.map((page) => (
+                  <li key={`pin-${page.id}`}>
+                    <button
+                      type="button"
+                      className={`list-item${workspace.selectedPageId === page.id && !showTrash ? ' active' : ''}`}
+                      onClick={() => {
+                        setShowTrash(false)
+                        setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
+                      }}
+                       onContextMenu={(event) => openPageContextMenu(event, page.id)}
+                    >
+                      📌 {page.title}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+              ) : null}
+
+              {showTrash ? (
+            <section className="sidebar-section">
+              <h2>ごみ箱</h2>
+              <ul className="flat-list">
+                {trashedPages.length === 0 ? <li className="muted">ごみ箱は空です</li> : null}
+                {trashedPages.map((page) => (
+                  <li key={`trash-${page.id}`}>
+                    <button
+                      type="button"
+                      className={`list-item${workspace.selectedPageId === page.id && showTrash ? ' active' : ''}`}
+                      onClick={() => {
+                        setShowTrash(true)
+                        setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
+                      }}
+                        onContextMenu={(event) => openPageContextMenu(event, page.id)}
+                    >
+                      🗑️ {page.title}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+              ) : (
+            <section className="sidebar-section">
+              <h2>ページ</h2>
+              <ul className="page-tree">{renderPageTree(nonTrashedRootPageIds)}</ul>
+            </section>
+              )}
+
 
               <div className="sidebar-actions">
                 <button type="button" onClick={() => downloadJson(workspace)}>
@@ -1845,101 +1941,6 @@ function App() {
             </div>
               </section>
 
-              <div className="search-box">
-            <input
-              ref={searchInputRef}
-              type="search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="検索（タイトル＋本文）"
-            />
-              </div>
-
-              <div className="view-toggle">
-            <button type="button" className={!showTrash ? 'active' : ''} onClick={() => setShowTrash(false)}>
-              通常表示
-            </button>
-            <button type="button" className={showTrash ? 'active' : ''} onClick={() => setShowTrash(true)}>
-              ごみ箱 ({trashedPages.length})
-            </button>
-              </div>
-
-              {searchQuery.trim() ? (
-            <section className="sidebar-section">
-              <h2>検索結果</h2>
-              <ul className="flat-list">
-                {searchResults.length === 0 ? <li className="muted">一致するページがありません</li> : null}
-                {searchResults.map((page) => (
-                  <li key={`search-${page.id}`}>
-                    <button
-                      type="button"
-                      className={`list-item${workspace.selectedPageId === page.id && !showTrash ? ' active' : ''}`}
-                      onClick={() => {
-                        setShowTrash(false)
-                        setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
-                      }}
-                       onContextMenu={(event) => openPageContextMenu(event, page.id)}
-                    >
-                      {page.isPinned ? '📌 ' : ''}
-                      {page.title}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-              ) : null}
-
-              {pinnedPages.length > 0 ? (
-            <section className="sidebar-section">
-              <h2>ピン留め</h2>
-              <ul className="flat-list">
-                {pinnedPages.map((page) => (
-                  <li key={`pin-${page.id}`}>
-                    <button
-                      type="button"
-                      className={`list-item${workspace.selectedPageId === page.id && !showTrash ? ' active' : ''}`}
-                      onClick={() => {
-                        setShowTrash(false)
-                        setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
-                      }}
-                       onContextMenu={(event) => openPageContextMenu(event, page.id)}
-                    >
-                      📌 {page.title}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-              ) : null}
-
-              {showTrash ? (
-            <section className="sidebar-section">
-              <h2>ごみ箱</h2>
-              <ul className="flat-list">
-                {trashedPages.length === 0 ? <li className="muted">ごみ箱は空です</li> : null}
-                {trashedPages.map((page) => (
-                  <li key={`trash-${page.id}`}>
-                    <button
-                      type="button"
-                      className={`list-item${workspace.selectedPageId === page.id && showTrash ? ' active' : ''}`}
-                      onClick={() => {
-                        setShowTrash(true)
-                        setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
-                      }}
-                        onContextMenu={(event) => openPageContextMenu(event, page.id)}
-                    >
-                      🗑️ {page.title}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-              ) : (
-            <section className="sidebar-section">
-              <h2>ページ</h2>
-              <ul className="page-tree">{renderPageTree(nonTrashedRootPageIds)}</ul>
-            </section>
-              )}
             </>
           ) : (
             <div className="sidebar-icon-actions">
