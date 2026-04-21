@@ -7,6 +7,7 @@ import { MantineProvider } from '@mantine/core'
 import '@mantine/core/styles.css'
 import '@blocknote/core/fonts/inter.css'
 import '@blocknote/mantine/style.css'
+import googleSyncTemplate from '../google-sync.gs?raw'
 import './App.css'
 
 type PageId = string
@@ -544,6 +545,8 @@ function App() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [isHelpOpen, setIsHelpOpen] = useState(false)
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
+  const [isSyncGuideOpen, setIsSyncGuideOpen] = useState(false)
+  const [syncGuideCopyMessage, setSyncGuideCopyMessage] = useState<string | null>(null)
   const [commandQuery, setCommandQuery] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [showTrash, setShowTrash] = useState(false)
@@ -1392,16 +1395,26 @@ function App() {
     setCommandQuery('')
   }, [addPage, movePageToTrash, openHelpWindow, renamePage, selectedPage, togglePin, workspace])
 
+  const copySyncTemplate = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(googleSyncTemplate)
+      setSyncGuideCopyMessage('GASコードをコピーしました。')
+    } catch {
+      setSyncGuideCopyMessage('コピーに失敗しました。手動でコピーしてください。')
+    }
+  }, [])
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setContextMenu(null)
         setIsHelpOpen(false)
         setIsCommandPaletteOpen(false)
+        setIsSyncGuideOpen(false)
         return
       }
 
-      if (isCommandPaletteOpen || isHelpOpen) {
+      if (isCommandPaletteOpen || isHelpOpen || isSyncGuideOpen) {
         return
       }
 
@@ -1472,7 +1485,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [addPage, isCommandPaletteOpen, isHelpOpen, movePageToTrash, openCommandPalette, renamePage, selectedPage, togglePin])
+  }, [addPage, isCommandPaletteOpen, isHelpOpen, isSyncGuideOpen, movePageToTrash, openCommandPalette, renamePage, selectedPage, togglePin])
 
   const nonTrashedRootPageIds = useMemo(
     () => workspace.rootPageIds.filter((rootId) => {
@@ -1703,6 +1716,15 @@ function App() {
                 <p className="muted">
                   手順: スプレッドシート作成 → GAS貼付 → Web公開 → この画面にURL設定 → 接続テスト
                 </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSyncGuideCopyMessage(null)
+                    setIsSyncGuideOpen(true)
+                  }}
+                >
+                  セットアップ手順とGASコードを表示
+                </button>
                 <p className="muted sync-note">
                   注意: Google同期機能は任意の機能です。設定・公開範囲・権限の管理は利用者の自己責任で行ってください。
                 </p>
@@ -2028,6 +2050,43 @@ function App() {
                 <li><kbd>/</kbd> または <kbd>@</kbd> コマンドパレットを接頭辞付きで開く</li>
               </ul>
               <p className="muted">例: <code>/new</code>, <code>/help</code>, <code>@rename</code>, <code>@trash</code></p>
+            </div>
+          </div>
+        ) : null}
+
+        {isSyncGuideOpen ? (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onClick={() => {
+              setIsSyncGuideOpen(false)
+            }}
+          >
+            <div
+              className="modal-panel sync-guide-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="sync-guide-dialog-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button type="button" autoFocus onClick={() => setIsSyncGuideOpen(false)}>
+                閉じる
+              </button>
+              <h3 id="sync-guide-dialog-title">Google同期セットアップガイド</h3>
+              <ol>
+                <li>Google スプレッドシートを新規作成し、URLまたはIDを控えます。</li>
+                <li>Google Apps Scriptで新規プロジェクトを作成し、下のコードを貼り付けて保存します。</li>
+                <li>「デプロイ」→「新しいデプロイ」→「ウェブアプリ」で公開し、発行されたURL（.../exec）を控えます。</li>
+                <li>この画面の同期設定にWebアプリURL・スプレッドシートURL/ID・同期キー・端末名を入力します。</li>
+                <li>「接続テスト」→「今すぐ同期」で動作確認します。</li>
+              </ol>
+              <div className="sync-template-actions">
+                <button type="button" onClick={() => void copySyncTemplate()}>
+                  GASコードをコピー
+                </button>
+                {syncGuideCopyMessage ? <p className="muted">{syncGuideCopyMessage}</p> : null}
+              </div>
+              <pre className="sync-template-code">{googleSyncTemplate}</pre>
             </div>
           </div>
         ) : null}
