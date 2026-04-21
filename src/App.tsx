@@ -198,20 +198,35 @@ function normalizeCloudRecord(value: SyncApiResponse['data']): CloudRecord | nul
   }
 }
 
+function getSyncApiEndpoint(gasUrl: string): URL | null {
+  const trimmedGasUrl = gasUrl.trim()
+  if (!trimmedGasUrl) {
+    return null
+  }
+
+  try {
+    return new URL(trimmedGasUrl)
+  } catch {
+    return null
+  }
+}
+
 async function callSyncApiGet(settings: SyncSettings, action: 'get' | 'test'): Promise<SyncApiResponse> {
   const spreadsheetId = extractSpreadsheetId(settings.spreadsheetRef)
-  const response = await fetch(settings.gasUrl, {
-    method: 'POST',
+  const endpoint = getSyncApiEndpoint(settings.gasUrl)
+  if (!endpoint) {
+    return {
+      ok: false,
+      message: '同期先URLが不正です。',
+    }
+  }
+  endpoint.searchParams.set('action', action)
+  endpoint.searchParams.set('syncKey', settings.syncKey.trim())
+  endpoint.searchParams.set('spreadsheetId', spreadsheetId)
+  endpoint.searchParams.set('deviceId', settings.deviceId.trim())
+  const response = await fetch(endpoint.toString(), {
+    method: 'GET',
     cache: 'no-store',
-    headers: {
-      'Content-Type': 'text/plain;charset=utf-8',
-    },
-    body: JSON.stringify({
-      action,
-      syncKey: settings.syncKey.trim(),
-      spreadsheetId,
-      deviceId: settings.deviceId.trim(),
-    }),
   })
   return parseSyncResponse(response)
 }
@@ -230,7 +245,15 @@ async function callSyncApiSave(
     }
   }
 
-  const response = await fetch(settings.gasUrl, {
+  const endpoint = getSyncApiEndpoint(settings.gasUrl)
+  if (!endpoint) {
+    return {
+      ok: false,
+      message: '同期先URLが不正です。',
+    }
+  }
+
+  const response = await fetch(endpoint.toString(), {
     method: 'POST',
     headers: {
       'Content-Type': 'text/plain;charset=utf-8',
