@@ -49,6 +49,56 @@
   text-align: left;
 }
 
+.sidebar-section.sync-settings {
+  border: 1px solid #e5e9f0;
+  border-radius: 10px;
+  padding: 10px;
+  gap: 10px;
+}
+
+.sync-settings label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: #4b5563;
+}
+
+.sync-settings input {
+  border: 1px solid #d0d7e2;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+}
+
+.sync-guide {
+  border-top: 1px dashed #d0d7e2;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sync-note {
+  color: #7c2d12;
+}
+
+.sync-status-panel {
+  border: 1px solid #e5e9f0;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.sync-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.sync-error {
+  color: #b91c1c;
+}
+
 .sidebar button,
 .context-menu button {
   cursor: pointer;

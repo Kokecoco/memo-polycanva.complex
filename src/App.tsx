@@ -29,6 +29,29 @@ interface Workspace {
   selectedPageId: PageId
 }
 
+interface SyncSettings {
+  gasUrl: string
+  spreadsheetRef: string
+  syncKey: string
+  deviceId: string
+}
+
+interface CloudRecord {
+  workspaceJson: string
+  updatedAt: number
+  deviceId: string
+}
+
+interface SyncApiResponse {
+  ok: boolean
+  message?: string
+  data?: {
+    workspaceJson?: string
+    updatedAt?: number
+    deviceId?: string
+  } | null
+}
+
 type ContextMenuTarget =
   | { kind: 'page'; pageId: PageId }
   | { kind: 'sidebar' }
@@ -54,7 +77,11 @@ const DB_NAME = 'memo-polycanva'
 const DB_VERSION = 1
 const STORE_NAME = 'workspace'
 const STORE_KEY = 'default'
+const SYNC_SETTINGS_STORAGE_KEY = 'memo-polycanva.sync-settings'
 const MAX_SEARCH_RESULTS = 20
+const SYNC_DEBOUNCE_MS = 1800
+const MAX_SYNC_JSON_BYTES = 900000
+const SYNC_CONFLICT_PROMPT_MESSAGE = '同じ更新時刻の競合を検知しました。\nOK: クラウドを採用\nキャンセル: ローカルを採用して上書き保存'
 let fallbackIdCounter = 0
 
 const defaultContent: PartialBlock[] = [
@@ -63,6 +90,163 @@ const defaultContent: PartialBlock[] = [
     content: 'ここにメモを書いてください。',
   },
 ]
+
+function createDefaultSyncSettings(): SyncSettings {
+  const randomSuffix = (() => {
+    const values = new Uint32Array(4)
+    if (globalThis.crypto?.getRandomValues) {
+      globalThis.crypto.getRandomValues(values)
+      return Array.from(values).map((value) => value.toString(36)).join('-')
+    }
+    return `${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+  })()
+  const fallbackDeviceId = `device-${Date.now()}-${randomSuffix}`
+  return {
+    gasUrl: '',
+    spreadsheetRef: '',
+    syncKey: '',
+    deviceId: globalThis.crypto?.randomUUID?.() ?? fallbackDeviceId,
+  }
+}
+
+function normalizeSyncSettings(value: unknown): SyncSettings {
+  const defaults = createDefaultSyncSettings()
+  if (!value || typeof value !== 'object') {
+    return defaults
+  }
+
+  const candidate = value as Partial<SyncSettings>
+  return {
+    gasUrl: typeof candidate.gasUrl === 'string' ? candidate.gasUrl.trim() : '',
+    spreadsheetRef: typeof candidate.spreadsheetRef === 'string' ? candidate.spreadsheetRef.trim() : '',
+    syncKey: typeof candidate.syncKey === 'string' ? candidate.syncKey.trim() : '',
+    deviceId: typeof candidate.deviceId === 'string' && candidate.deviceId.trim() ? candidate.deviceId.trim() : defaults.deviceId,
+  }
+}
+
+function extractSpreadsheetId(input: string): string {
+  const value = input.trim()
+  if (!value) {
+    return ''
+  }
+
+  const match = value.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/)
+  if (match?.[1]) {
+    return match[1]
+  }
+
+  if (/^[a-zA-Z0-9-_]{20,}$/.test(value)) {
+    return value
+  }
+
+  return ''
+}
+
+function isSyncConfigured(settings: SyncSettings): boolean {
+  let gasUrlValid = false
+  try {
+    const url = new URL(settings.gasUrl.trim())
+    gasUrlValid = url.protocol === 'https:'
+  } catch {
+    // Invalid GAS URL should be treated as not configured.
+  }
+
+  return Boolean(
+    gasUrlValid
+    && settings.syncKey.trim()
+    && extractSpreadsheetId(settings.spreadsheetRef),
+  )
+}
+
+function getWorkspaceUpdatedAt(workspace: Workspace): number {
+  const values = Object.values(workspace.pages)
+  if (values.length === 0) {
+    return 0
+  }
+  return values.reduce((max, page) => Math.max(max, page.updatedAt), 0)
+}
+
+async function parseSyncResponse(response: Response): Promise<SyncApiResponse> {
+  const raw = await response.text()
+  try {
+    return JSON.parse(raw) as SyncApiResponse
+  } catch {
+    return {
+      ok: false,
+      message: raw || 'サーバー応答がJSONではありません。',
+    }
+  }
+}
+
+function normalizeCloudRecord(value: SyncApiResponse['data']): CloudRecord | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const workspaceJson = typeof value.workspaceJson === 'string' ? value.workspaceJson : ''
+  const updatedAt = typeof value.updatedAt === 'number' && Number.isFinite(value.updatedAt) ? value.updatedAt : -1
+  const deviceId = typeof value.deviceId === 'string' ? value.deviceId : ''
+
+  if (!workspaceJson || updatedAt <= 0) {
+    return null
+  }
+
+  return {
+    workspaceJson,
+    updatedAt,
+    deviceId,
+  }
+}
+
+async function callSyncApiGet(settings: SyncSettings, action: 'get' | 'test'): Promise<SyncApiResponse> {
+  const spreadsheetId = extractSpreadsheetId(settings.spreadsheetRef)
+  const response = await fetch(settings.gasUrl, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: {
+      'Content-Type': 'text/plain;charset=utf-8',
+    },
+    body: JSON.stringify({
+      action,
+      syncKey: settings.syncKey.trim(),
+      spreadsheetId,
+      deviceId: settings.deviceId.trim(),
+    }),
+  })
+  return parseSyncResponse(response)
+}
+
+async function callSyncApiSave(
+  settings: SyncSettings,
+  workspaceJson: string,
+  updatedAt: number,
+): Promise<SyncApiResponse> {
+  const spreadsheetId = extractSpreadsheetId(settings.spreadsheetRef)
+  const jsonBytes = new TextEncoder().encode(workspaceJson).length
+  if (jsonBytes > MAX_SYNC_JSON_BYTES) {
+    return {
+      ok: false,
+      message: `同期データサイズが大きすぎます（${Math.round(jsonBytes / 1024)}KB）。`,
+    }
+  }
+
+  const response = await fetch(settings.gasUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/plain;charset=utf-8',
+    },
+    body: JSON.stringify({
+      action: 'save',
+      syncKey: settings.syncKey.trim(),
+      spreadsheetId,
+      deviceId: settings.deviceId.trim(),
+      updatedAt,
+      workspaceJson,
+    }),
+  })
+
+  return parseSyncResponse(response)
+}
 
 function createPage(parentId: PageId | null = null, title = '新しいページ'): MemoPage {
   const fallbackId = `${Date.now()}-${Math.round((globalThis.performance?.now?.() ?? 0) * 1000)}-${fallbackIdCounter++}`
@@ -268,6 +452,10 @@ function formatDateTime(timestamp: number): string {
   })
 }
 
+function chooseCloudOnConflict(): boolean {
+  return window.confirm(SYNC_CONFLICT_PROMPT_MESSAGE)
+}
+
 function isEditableElement(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false
@@ -312,7 +500,24 @@ function Editor({ content, onContentChange }: { content: string; onContentChange
 
 function App() {
   const [workspace, setWorkspace] = useState<Workspace>(() => createDefaultWorkspace())
+  const [syncSettings, setSyncSettings] = useState<SyncSettings>(() => {
+    try {
+      const raw = localStorage.getItem(SYNC_SETTINGS_STORAGE_KEY)
+      if (!raw) {
+        return createDefaultSyncSettings()
+      }
+      return normalizeSyncSettings(JSON.parse(raw))
+    } catch {
+      return createDefaultSyncSettings()
+    }
+  })
   const [isLoaded, setIsLoaded] = useState(false)
+  const [isSyncSettingsOpen, setIsSyncSettingsOpen] = useState(false)
+  const [syncStatus, setSyncStatus] = useState('同期は未設定です。')
+  const [syncError, setSyncError] = useState<string | null>(null)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [needsRetry, setNeedsRetry] = useState(false)
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [isHelpOpen, setIsHelpOpen] = useState(false)
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
@@ -322,6 +527,32 @@ function App() {
   const importInputRef = useRef<HTMLInputElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const commandInputRef = useRef<HTMLInputElement>(null)
+  const workspaceRef = useRef(workspace)
+  const isSyncingRef = useRef(false)
+  const startupSyncCompletedRef = useRef(false)
+  const autoSyncTimerRef = useRef<number | null>(null)
+  const lastSyncedWorkspaceSnapshotRef = useRef<string>('')
+
+  useEffect(() => {
+    workspaceRef.current = workspace
+  }, [workspace])
+
+  useEffect(() => {
+    isSyncingRef.current = isSyncing
+  }, [isSyncing])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SYNC_SETTINGS_STORAGE_KEY, JSON.stringify(syncSettings))
+    } catch (error) {
+      console.warn('Failed to persist sync settings to localStorage. Using in-memory settings only.', error)
+    }
+  }, [syncSettings])
+
+  useEffect(() => {
+    startupSyncCompletedRef.current = false
+    lastSyncedWorkspaceSnapshotRef.current = ''
+  }, [syncSettings.gasUrl, syncSettings.spreadsheetRef, syncSettings.syncKey])
 
   useEffect(() => {
     let mounted = true
@@ -350,6 +581,296 @@ function App() {
 
     void saveWorkspaceToIndexedDB(workspace)
   }, [workspace, isLoaded])
+
+  const loadCloudRecord = useCallback(async (): Promise<CloudRecord | null> => {
+    if (!isSyncConfigured(syncSettings)) {
+      return null
+    }
+
+    const response = await callSyncApiGet(syncSettings, 'get')
+    if (!response.ok) {
+      throw new Error(response.message || 'クラウドデータの取得に失敗しました。')
+    }
+    return normalizeCloudRecord(response.data)
+  }, [syncSettings])
+
+  const saveWorkspaceToCloud = useCallback(async (targetWorkspace: Workspace, label: string, skipIfUnchanged = false) => {
+    if (!isSyncConfigured(syncSettings)) {
+      return false
+    }
+
+    const workspaceSnapshot = JSON.stringify(targetWorkspace)
+    const workspaceUpdatedAt = getWorkspaceUpdatedAt(targetWorkspace)
+    if (skipIfUnchanged && workspaceSnapshot === lastSyncedWorkspaceSnapshotRef.current) {
+      setSyncStatus('自動同期の差分はありません。')
+      setNeedsRetry(false)
+      return true
+    }
+
+    setIsSyncing(true)
+    setSyncError(null)
+    try {
+      const response = await callSyncApiSave(syncSettings, workspaceSnapshot, workspaceUpdatedAt)
+      if (!response.ok) {
+        throw new Error(response.message || 'クラウド保存に失敗しました。')
+      }
+
+      const now = Date.now()
+      setLastSyncAt(now)
+      setNeedsRetry(false)
+      lastSyncedWorkspaceSnapshotRef.current = workspaceSnapshot
+      setSyncStatus(`${label}クラウドへ保存しました。`)
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'クラウド保存に失敗しました。'
+      setSyncError(message)
+      setNeedsRetry(true)
+      setSyncStatus('同期に失敗しました。ローカルデータは保持されています。')
+      return false
+    } finally {
+      setIsSyncing(false)
+    }
+  }, [syncSettings])
+
+  const syncNow = useCallback(async () => {
+    if (!isSyncConfigured(syncSettings)) {
+      setSyncError('同期設定を完了してください。')
+      return
+    }
+
+    setIsSyncing(true)
+    setSyncError(null)
+    try {
+      const local = workspaceRef.current
+      const cloud = await loadCloudRecord()
+      if (!cloud) {
+        await saveWorkspaceToCloud(local, '手動同期で')
+        return
+      }
+
+      const localUpdatedAt = getWorkspaceUpdatedAt(local)
+      const cloudWorkspace = normalizeWorkspace(JSON.parse(cloud.workspaceJson))
+      if (!cloudWorkspace) {
+        throw new Error('クラウドデータの形式が不正です。')
+      }
+
+      if (cloud.updatedAt > localUpdatedAt) {
+        setWorkspace(cloudWorkspace)
+        setLastSyncAt(Date.now())
+        setNeedsRetry(false)
+        setSyncStatus('手動同期でクラウドの新しいデータを反映しました。')
+        return
+      }
+
+      if (localUpdatedAt > cloud.updatedAt) {
+        await saveWorkspaceToCloud(local, '手動同期で')
+        return
+      }
+
+      const localSnapshot = JSON.stringify(local)
+      if (localSnapshot === cloud.workspaceJson) {
+        setLastSyncAt(Date.now())
+        setNeedsRetry(false)
+        setSyncStatus('手動同期で差分はありませんでした。')
+        return
+      }
+
+      const useCloud = chooseCloudOnConflict()
+      if (useCloud) {
+        setWorkspace(cloudWorkspace)
+        setLastSyncAt(Date.now())
+        setNeedsRetry(false)
+        setSyncStatus('競合解決でクラウドデータを採用しました。')
+      } else {
+        await saveWorkspaceToCloud(local, '競合解決で')
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '同期に失敗しました。'
+      setSyncError(message)
+      setNeedsRetry(true)
+      setSyncStatus('同期に失敗しました。ローカルデータは保持されています。')
+    } finally {
+      setIsSyncing(false)
+    }
+  }, [loadCloudRecord, saveWorkspaceToCloud, syncSettings])
+
+  const restoreFromCloud = useCallback(async () => {
+    if (!isSyncConfigured(syncSettings)) {
+      setSyncError('同期設定を完了してください。')
+      return
+    }
+
+    setIsSyncing(true)
+    setSyncError(null)
+    try {
+      const cloud = await loadCloudRecord()
+      if (!cloud) {
+        throw new Error('クラウドに復元可能なデータがありません。')
+      }
+
+      const parsed = normalizeWorkspace(JSON.parse(cloud.workspaceJson))
+      if (!parsed) {
+        throw new Error('クラウドデータの形式が不正です。')
+      }
+
+      const accepted = window.confirm('クラウドデータでローカルを上書きします。続行しますか？')
+      if (!accepted) {
+        setSyncStatus('クラウド復元をキャンセルしました。')
+        return
+      }
+
+      setWorkspace(parsed)
+      setShowTrash(false)
+      setLastSyncAt(Date.now())
+      setNeedsRetry(false)
+      setSyncStatus('クラウドデータから復元しました。')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'クラウド復元に失敗しました。'
+      setSyncError(message)
+      setNeedsRetry(true)
+      setSyncStatus('クラウド復元に失敗しました。')
+    } finally {
+      setIsSyncing(false)
+    }
+  }, [loadCloudRecord, syncSettings])
+
+  const testSyncConnection = useCallback(async () => {
+    if (!isSyncConfigured(syncSettings)) {
+      setSyncError('同期設定を完了してください。')
+      return
+    }
+
+    setIsSyncing(true)
+    setSyncError(null)
+    try {
+      const response = await callSyncApiGet(syncSettings, 'test')
+      if (!response.ok) {
+        throw new Error(response.message || '接続テストに失敗しました。')
+      }
+      setSyncStatus('接続テスト成功: GASとスプレッドシートに接続できました。')
+      setNeedsRetry(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '接続テストに失敗しました。'
+      setSyncError(message)
+      setNeedsRetry(true)
+      setSyncStatus('接続テストに失敗しました。')
+    } finally {
+      setIsSyncing(false)
+    }
+  }, [syncSettings])
+
+  useEffect(() => {
+    if (!isLoaded || startupSyncCompletedRef.current) {
+      return
+    }
+
+    if (!isSyncConfigured(syncSettings)) {
+      startupSyncCompletedRef.current = true
+      return
+    }
+
+    let cancelled = false
+    void Promise.resolve()
+      .then(() => {
+        if (cancelled) {
+          return null
+        }
+        setIsSyncing(true)
+        setSyncError(null)
+        return loadCloudRecord()
+      })
+      .then(async (cloud) => {
+        if (cancelled) {
+          return
+        }
+
+        const local = workspaceRef.current
+        const localUpdatedAt = getWorkspaceUpdatedAt(local)
+        if (!cloud) {
+          await saveWorkspaceToCloud(local, '初期同期で')
+          return
+        }
+
+        const parsedCloud = normalizeWorkspace(JSON.parse(cloud.workspaceJson))
+        if (!parsedCloud) {
+          throw new Error('クラウドデータの形式が不正です。')
+        }
+
+        if (cloud.updatedAt > localUpdatedAt) {
+          setWorkspace(parsedCloud)
+          setLastSyncAt(Date.now())
+          setNeedsRetry(false)
+          setSyncStatus('初期同期でクラウドデータを反映しました。')
+          return
+        }
+
+        if (localUpdatedAt > cloud.updatedAt) {
+          await saveWorkspaceToCloud(local, '初期同期で')
+          return
+        }
+
+        const localSnapshot = JSON.stringify(local)
+        if (localSnapshot !== cloud.workspaceJson) {
+          const useCloud = chooseCloudOnConflict()
+          if (useCloud) {
+            setWorkspace(parsedCloud)
+            setLastSyncAt(Date.now())
+            setNeedsRetry(false)
+            setSyncStatus('競合解決でクラウドデータを採用しました。')
+            return
+          }
+          await saveWorkspaceToCloud(local, '競合解決で')
+          return
+        }
+
+        setLastSyncAt(Date.now())
+        setNeedsRetry(false)
+        setSyncStatus('初期同期が完了しました。')
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return
+        }
+        const message = error instanceof Error ? error.message : '初期同期に失敗しました。'
+        setSyncError(message)
+        setNeedsRetry(true)
+        setSyncStatus('初期同期に失敗しました。ローカルデータを使用しています。')
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsSyncing(false)
+          startupSyncCompletedRef.current = true
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isLoaded, loadCloudRecord, saveWorkspaceToCloud, syncSettings])
+
+  useEffect(() => {
+    if (!isLoaded || isSyncing || !startupSyncCompletedRef.current || !isSyncConfigured(syncSettings)) {
+      return
+    }
+
+    if (autoSyncTimerRef.current) {
+      window.clearTimeout(autoSyncTimerRef.current)
+    }
+
+    autoSyncTimerRef.current = window.setTimeout(() => {
+      // Prevent overlapping sync requests when another sync started during debounce wait.
+      if (isSyncingRef.current) {
+        return
+      }
+      void saveWorkspaceToCloud(workspaceRef.current, '自動同期で', true)
+    }, SYNC_DEBOUNCE_MS)
+
+    return () => {
+      if (autoSyncTimerRef.current) {
+        window.clearTimeout(autoSyncTimerRef.current)
+      }
+    }
+  }, [workspace, isLoaded, isSyncing, saveWorkspaceToCloud, syncSettings])
 
   useEffect(() => {
     if (!contextMenu) {
@@ -980,6 +1501,8 @@ function App() {
 
   const activePage = selectedPage
   const displayedPage = activePage && (showTrash ? activePage.isTrashed : !activePage.isTrashed) ? activePage : null
+  const syncConfigured = isSyncConfigured(syncSettings)
+  const lastSyncLabel = lastSyncAt ? formatDateTime(lastSyncAt) : '未実行'
 
   const openContextMenu = useCallback((event: { clientX: number; clientY: number; preventDefault: () => void }, target: ContextMenuTarget) => {
     event.preventDefault()
@@ -1089,6 +1612,9 @@ function App() {
             <button type="button" onClick={openHelpWindow}>
               ヘルプ
             </button>
+            <button type="button" onClick={() => setIsSyncSettingsOpen((previous) => !previous)}>
+              {isSyncSettingsOpen ? '同期設定を閉じる' : '同期設定'}
+            </button>
             <input
               ref={importInputRef}
               className="hidden-input"
@@ -1099,6 +1625,90 @@ function App() {
               }}
             />
           </div>
+
+          {isSyncSettingsOpen ? (
+            <section className="sidebar-section sync-settings">
+              <h2>Google同期設定</h2>
+              <label>
+                GAS WebアプリURL
+                <input
+                  type="url"
+                  value={syncSettings.gasUrl}
+                  onChange={(event) => {
+                    setSyncSettings((prev) => ({ ...prev, gasUrl: event.target.value }))
+                  }}
+                  placeholder="https://script.google.com/macros/s/.../exec"
+                />
+              </label>
+              <label>
+                スプレッドシートURLまたはID
+                <input
+                  type="text"
+                  value={syncSettings.spreadsheetRef}
+                  onChange={(event) => {
+                    setSyncSettings((prev) => ({ ...prev, spreadsheetRef: event.target.value }))
+                  }}
+                  placeholder="https://docs.google.com/spreadsheets/d/... または ID"
+                />
+              </label>
+              <label>
+                同期キー（共有キー）
+                <input
+                  type="text"
+                  value={syncSettings.syncKey}
+                  onChange={(event) => {
+                    setSyncSettings((prev) => ({ ...prev, syncKey: event.target.value }))
+                  }}
+                  placeholder="同じ値を全端末で設定"
+                />
+              </label>
+              <label>
+                端末名（端末ID）
+                <input
+                  type="text"
+                  value={syncSettings.deviceId}
+                  onChange={(event) => {
+                    setSyncSettings((prev) => ({ ...prev, deviceId: event.target.value }))
+                  }}
+                  placeholder="my-laptop"
+                />
+              </label>
+              <p className="muted">
+                {syncConfigured ? '同期設定は有効です。' : '未設定項目があります。既存のローカル保存のみ有効です。'}
+              </p>
+              <div className="sync-guide">
+                <p className="muted">
+                  手順: スプレッドシート作成 → GAS貼付 → Web公開 → この画面にURL設定 → 接続テスト
+                </p>
+                <p className="muted sync-note">
+                  注意: Google同期機能は任意の機能です。設定・公開範囲・権限の管理は利用者の自己責任で行ってください。
+                </p>
+              </div>
+            </section>
+          ) : null}
+
+          <section className="sidebar-section sync-status-panel">
+            <h2>同期ステータス</h2>
+            <p className="muted">{isSyncing ? '同期処理中...' : syncStatus}</p>
+            <p className="muted">最終同期: {lastSyncLabel}</p>
+            {syncError ? <p className="muted sync-error">エラー: {syncError}</p> : null}
+            <div className="sync-actions">
+              <button type="button" disabled={!syncConfigured || isSyncing} onClick={() => void testSyncConnection()}>
+                接続テスト
+              </button>
+              <button type="button" disabled={!syncConfigured || isSyncing} onClick={() => void syncNow()}>
+                今すぐ同期
+              </button>
+              <button type="button" disabled={!syncConfigured || isSyncing} onClick={() => void restoreFromCloud()}>
+                クラウドから復元
+              </button>
+              {needsRetry ? (
+                <button type="button" disabled={!syncConfigured || isSyncing} onClick={() => void syncNow()}>
+                  リトライ
+                </button>
+              ) : null}
+            </div>
+          </section>
 
           <div className="search-box">
             <input
