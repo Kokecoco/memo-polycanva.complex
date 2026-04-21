@@ -1652,6 +1652,14 @@ function App() {
               <p className="muted">
                 {syncConfigured ? '同期設定は有効です。' : '未設定項目があります。既存のローカル保存のみ有効です。'}
               </p>
+              <div className="sync-guide">
+                <p className="muted">
+                  手順: スプレッドシート作成 → GAS貼付 → Web公開 → この画面にURL設定 → 接続テスト
+                </p>
+                <p className="muted sync-note">
+                  注意: Google同期機能は任意機能です。設定・公開範囲・権限の管理は利用者の自己責任で行ってください。
+                </p>
+              </div>
             </section>
           ) : null}
 

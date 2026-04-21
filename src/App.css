@@ -71,6 +71,18 @@
   font-size: 0.82rem;
 }
 
+.sync-guide {
+  border-top: 1px dashed #d0d7e2;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sync-note {
+  color: #7c2d12;
+}
+
 .sync-status-panel {
   border: 1px solid #e5e9f0;
   border-radius: 10px;
