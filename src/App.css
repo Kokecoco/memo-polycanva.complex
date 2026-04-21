@@ -10,6 +10,10 @@
   color: #1f2937;
 }
 
+.app-layout.sidebar-collapsed {
+  grid-template-columns: 56px 1fr;
+}
+
 .sidebar {
   border-right: 1px solid #dde1e8;
   background: #fff;
@@ -19,6 +23,25 @@
   gap: 12px;
   max-height: 100vh;
   overflow: auto;
+}
+
+.sidebar.collapsed {
+  padding: 12px 8px;
+  overflow: hidden;
+}
+
+.sidebar-collapse-toggle {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sidebar.collapsed .sidebar-collapse-toggle {
+  justify-content: center;
+}
+
+.sidebar-toggle-button {
+  width: 36px;
+  text-align: center;
 }
 
 .sidebar-header {
