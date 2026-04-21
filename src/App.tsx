@@ -550,6 +550,7 @@ function App() {
   const [commandQuery, setCommandQuery] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [showTrash, setShowTrash] = useState(false)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const commandInputRef = useRef<HTMLInputElement>(null)
@@ -1072,7 +1073,6 @@ function App() {
       }
     })
 
-    setShowTrash(true)
     setContextMenu(null)
   }, [])
 
@@ -1634,9 +1634,9 @@ function App() {
 
   return (
     <MantineProvider>
-      <div className="app-layout">
+      <div className={`app-layout${isSidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
         <aside
-          className="sidebar"
+          className={`sidebar${isSidebarCollapsed ? ' collapsed' : ''}`}
           onContextMenu={(event) => {
             const target = event.target as HTMLElement
             if (target.closest('.page-item, .list-item, input, button')) {
@@ -1645,41 +1645,53 @@ function App() {
             openContextMenu(event, { kind: 'sidebar' })
           }}
         >
-          <div className="sidebar-header">
-            <h1>Memo Polycanva</h1>
-            <button type="button" onClick={() => addPage(null)}>
-              ルートページ追加
+          <div className="sidebar-collapse-toggle">
+            <button
+              type="button"
+              className="sidebar-toggle-button"
+              onClick={() => setIsSidebarCollapsed((previous) => !previous)}
+            >
+              {isSidebarCollapsed ? '▶' : '◀'}
             </button>
           </div>
 
-          <div className="sidebar-actions">
-            <button type="button" onClick={() => downloadJson(workspace)}>
-              JSONエクスポート
-            </button>
-            <button type="button" onClick={() => importInputRef.current?.click()}>
-              JSONインポート
-            </button>
-            <button type="button" onClick={() => openCommandPalette('/')}>
-              コマンド
-            </button>
-            <button type="button" onClick={openHelpWindow}>
-              ヘルプ
-            </button>
-            <button type="button" onClick={() => setIsSyncSettingsOpen((previous) => !previous)}>
-              {isSyncSettingsOpen ? '同期設定を閉じる' : '同期設定'}
-            </button>
-            <input
-              ref={importInputRef}
-              className="hidden-input"
-              type="file"
-              accept="application/json"
-              onChange={(event) => {
-                void importJson(event)
-              }}
-            />
-          </div>
+          {!isSidebarCollapsed ? (
+            <>
+              <div className="sidebar-header">
+                <h1>Memo Polycanva</h1>
+                <button type="button" onClick={() => addPage(null)}>
+                  ルートページ追加
+                </button>
+              </div>
 
-          {isSyncSettingsOpen ? (
+              <div className="sidebar-actions">
+                <button type="button" onClick={() => downloadJson(workspace)}>
+                  JSONエクスポート
+                </button>
+                <button type="button" onClick={() => importInputRef.current?.click()}>
+                  JSONインポート
+                </button>
+                <button type="button" onClick={() => openCommandPalette('/')}>
+                  コマンド
+                </button>
+                <button type="button" onClick={openHelpWindow}>
+                  ヘルプ
+                </button>
+                <button type="button" onClick={() => setIsSyncSettingsOpen((previous) => !previous)}>
+                  {isSyncSettingsOpen ? '同期設定を閉じる' : '同期設定'}
+                </button>
+                <input
+                  ref={importInputRef}
+                  className="hidden-input"
+                  type="file"
+                  accept="application/json"
+                  onChange={(event) => {
+                    void importJson(event)
+                  }}
+                />
+              </div>
+
+              {isSyncSettingsOpen ? (
             <section className="sidebar-section sync-settings">
               <h2>Google同期設定</h2>
               <label>
@@ -1744,9 +1756,9 @@ function App() {
                 </p>
               </div>
             </section>
-          ) : null}
+              ) : null}
 
-          <section className="sidebar-section sync-status-panel">
+              <section className="sidebar-section sync-status-panel">
             <h2>同期ステータス</h2>
             <p className="muted">{isSyncing ? '同期処理中...' : syncStatus}</p>
             <p className="muted">最終同期: {lastSyncLabel}</p>
@@ -1767,9 +1779,9 @@ function App() {
                 </button>
               ) : null}
             </div>
-          </section>
+              </section>
 
-          <div className="search-box">
+              <div className="search-box">
             <input
               ref={searchInputRef}
               type="search"
@@ -1777,18 +1789,18 @@ function App() {
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="検索（タイトル＋本文）"
             />
-          </div>
+              </div>
 
-          <div className="view-toggle">
+              <div className="view-toggle">
             <button type="button" className={!showTrash ? 'active' : ''} onClick={() => setShowTrash(false)}>
               通常表示
             </button>
             <button type="button" className={showTrash ? 'active' : ''} onClick={() => setShowTrash(true)}>
               ごみ箱 ({trashedPages.length})
             </button>
-          </div>
+              </div>
 
-          {searchQuery.trim() ? (
+              {searchQuery.trim() ? (
             <section className="sidebar-section">
               <h2>検索結果</h2>
               <ul className="flat-list">
@@ -1811,9 +1823,9 @@ function App() {
                 ))}
               </ul>
             </section>
-          ) : null}
+              ) : null}
 
-          {pinnedPages.length > 0 ? (
+              {pinnedPages.length > 0 ? (
             <section className="sidebar-section">
               <h2>ピン留め</h2>
               <ul className="flat-list">
@@ -1834,9 +1846,9 @@ function App() {
                 ))}
               </ul>
             </section>
-          ) : null}
+              ) : null}
 
-          {showTrash ? (
+              {showTrash ? (
             <section className="sidebar-section">
               <h2>ごみ箱</h2>
               <ul className="flat-list">
@@ -1858,12 +1870,14 @@ function App() {
                 ))}
               </ul>
             </section>
-          ) : (
+              ) : (
             <section className="sidebar-section">
               <h2>ページ</h2>
               <ul className="page-tree">{renderPageTree(nonTrashedRootPageIds)}</ul>
             </section>
-          )}
+              )}
+            </>
+          ) : null}
         </aside>
 
         <main
