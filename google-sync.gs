@@ -117,18 +117,24 @@ function findRowBySyncKey_(sheet, syncKey) {
     return null
   }
 
-  const values = sheet.getRange(2, 1, lastRow - 1, HEADER.length).getValues()
-  for (let i = values.length - 1; i >= 0; i -= 1) {
-    if (String(values[i][0]) === syncKey) {
-      return {
-        rowIndex: i + 2,
-        workspaceJson: String(values[i][1] || ''),
-        updatedAt: Number(values[i][2] || 0),
-        deviceId: String(values[i][3] || ''),
-      }
-    }
+  const keyRange = sheet.getRange(2, 1, lastRow - 1, 1)
+  const match = keyRange
+    .createTextFinder(syncKey)
+    .matchEntireCell(true)
+    .findNext()
+
+  if (!match) {
+    return null
   }
-  return null
+
+  const rowIndex = match.getRow()
+  const rowValues = sheet.getRange(rowIndex, 1, 1, HEADER.length).getValues()[0]
+  return {
+    rowIndex: rowIndex,
+    workspaceJson: String(rowValues[1] || ''),
+    updatedAt: Number(rowValues[2] || 0),
+    deviceId: String(rowValues[3] || ''),
+  }
 }
 
 function parsePostBody_(e) {

@@ -80,7 +80,8 @@ const STORE_KEY = 'default'
 const SYNC_SETTINGS_STORAGE_KEY = 'memo-polycanva.sync-settings'
 const MAX_SEARCH_RESULTS = 20
 const SYNC_DEBOUNCE_MS = 1800
-const MAX_SYNC_JSON_BYTES = 900_000
+const MAX_SYNC_JSON_BYTES = 900000
+const SYNC_CONFLICT_PROMPT_MESSAGE = '同じ更新時刻の競合を検知しました。\nOK: クラウドを採用\nキャンセル: ローカルを採用して上書き保存'
 let fallbackIdCounter = 0
 
 const defaultContent: PartialBlock[] = [
@@ -91,12 +92,20 @@ const defaultContent: PartialBlock[] = [
 ]
 
 function createDefaultSyncSettings(): SyncSettings {
-  const fallbackId = `device-${Date.now()}-${Math.round((globalThis.performance?.now?.() ?? 0) * 1000)}`
+  const randomSuffix = (() => {
+    const values = new Uint32Array(4)
+    if (globalThis.crypto?.getRandomValues) {
+      globalThis.crypto.getRandomValues(values)
+      return Array.from(values).map((value) => value.toString(36)).join('-')
+    }
+    return `${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+  })()
+  const fallbackDeviceId = `device-${Date.now()}-${randomSuffix}`
   return {
     gasUrl: '',
     spreadsheetRef: '',
     syncKey: '',
-    deviceId: globalThis.crypto?.randomUUID?.() ?? fallbackId,
+    deviceId: globalThis.crypto?.randomUUID?.() ?? fallbackDeviceId,
   }
 }
 
@@ -167,10 +176,10 @@ function normalizeCloudRecord(value: SyncApiResponse['data']): CloudRecord | nul
   }
 
   const workspaceJson = typeof value.workspaceJson === 'string' ? value.workspaceJson : ''
-  const updatedAt = typeof value.updatedAt === 'number' && Number.isFinite(value.updatedAt) ? value.updatedAt : 0
-  const deviceId = typeof value.deviceId === 'string' ? value.deviceId : 'unknown'
+  const updatedAt = typeof value.updatedAt === 'number' && Number.isFinite(value.updatedAt) ? value.updatedAt : -1
+  const deviceId = typeof value.deviceId === 'string' ? value.deviceId : ''
 
-  if (!workspaceJson || !updatedAt) {
+  if (!workspaceJson || updatedAt <= 0) {
     return null
   }
 
@@ -196,10 +205,13 @@ async function callSyncApiGet(settings: SyncSettings, action: 'get' | 'test'): P
   return parseSyncResponse(response)
 }
 
-async function callSyncApiSave(settings: SyncSettings, workspace: Workspace): Promise<SyncApiResponse> {
+async function callSyncApiSave(
+  settings: SyncSettings,
+  workspaceJson: string,
+  updatedAt: number,
+): Promise<SyncApiResponse> {
   const spreadsheetId = extractSpreadsheetId(settings.spreadsheetRef)
-  const workspaceJson = JSON.stringify(workspace)
-  const jsonBytes = new Blob([workspaceJson]).size
+  const jsonBytes = new TextEncoder().encode(workspaceJson).length
   if (jsonBytes > MAX_SYNC_JSON_BYTES) {
     return {
       ok: false,
@@ -217,7 +229,7 @@ async function callSyncApiSave(settings: SyncSettings, workspace: Workspace): Pr
       syncKey: settings.syncKey.trim(),
       spreadsheetId,
       deviceId: settings.deviceId.trim(),
-      updatedAt: getWorkspaceUpdatedAt(workspace),
+      updatedAt,
       workspaceJson,
     }),
   })
@@ -429,6 +441,10 @@ function formatDateTime(timestamp: number): string {
   })
 }
 
+function chooseCloudOnConflict(): boolean {
+  return window.confirm(SYNC_CONFLICT_PROMPT_MESSAGE)
+}
+
 function isEditableElement(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false
@@ -502,7 +518,8 @@ function App() {
   const commandInputRef = useRef<HTMLInputElement>(null)
   const workspaceRef = useRef(workspace)
   const startupSyncCompletedRef = useRef(false)
-  const debouncedCloudSaveRef = useRef<number | null>(null)
+  const autoSyncTimerRef = useRef<number | null>(null)
+  const lastSyncedWorkspaceSnapshotRef = useRef<string>('')
 
   useEffect(() => {
     workspaceRef.current = workspace
@@ -514,6 +531,7 @@ function App() {
 
   useEffect(() => {
     startupSyncCompletedRef.current = false
+    lastSyncedWorkspaceSnapshotRef.current = ''
   }, [syncSettings.gasUrl, syncSettings.spreadsheetRef, syncSettings.syncKey])
 
   useEffect(() => {
@@ -556,15 +574,23 @@ function App() {
     return normalizeCloudRecord(response.data)
   }, [syncSettings])
 
-  const saveWorkspaceToCloud = useCallback(async (targetWorkspace: Workspace, label: string) => {
+  const saveWorkspaceToCloud = useCallback(async (targetWorkspace: Workspace, label: string, skipIfUnchanged = false) => {
     if (!isSyncConfigured(syncSettings)) {
       return false
+    }
+
+    const workspaceSnapshot = JSON.stringify(targetWorkspace)
+    const workspaceUpdatedAt = getWorkspaceUpdatedAt(targetWorkspace)
+    if (skipIfUnchanged && workspaceSnapshot === lastSyncedWorkspaceSnapshotRef.current) {
+      setSyncStatus('自動同期の差分はありません。')
+      setNeedsRetry(false)
+      return true
     }
 
     setIsSyncing(true)
     setSyncError(null)
     try {
-      const response = await callSyncApiSave(syncSettings, targetWorkspace)
+      const response = await callSyncApiSave(syncSettings, workspaceSnapshot, workspaceUpdatedAt)
       if (!response.ok) {
         throw new Error(response.message || 'クラウド保存に失敗しました。')
       }
@@ -572,6 +598,7 @@ function App() {
       const now = Date.now()
       setLastSyncAt(now)
       setNeedsRetry(false)
+      lastSyncedWorkspaceSnapshotRef.current = workspaceSnapshot
       setSyncStatus(`${label}クラウドへ保存しました。`)
       return true
     } catch (error) {
@@ -620,17 +647,15 @@ function App() {
         return
       }
 
-      const localJson = JSON.stringify(local)
-      if (localJson === cloud.workspaceJson) {
+      const localSnapshot = JSON.stringify(local)
+      if (localSnapshot === cloud.workspaceJson) {
         setLastSyncAt(Date.now())
         setNeedsRetry(false)
         setSyncStatus('手動同期で差分はありませんでした。')
         return
       }
 
-      const useCloud = window.confirm(
-        '同じ更新時刻の競合を検知しました。\nOK: クラウドを採用\nキャンセル: ローカルを採用して上書き保存',
-      )
+      const useCloud = chooseCloudOnConflict()
       if (useCloud) {
         setWorkspace(cloudWorkspace)
         setLastSyncAt(Date.now())
@@ -764,10 +789,9 @@ function App() {
           return
         }
 
-        if (JSON.stringify(local) !== cloud.workspaceJson) {
-          const useCloud = window.confirm(
-            '同じ更新時刻の競合を検知しました。\nOK: クラウドを採用\nキャンセル: ローカルを採用して上書き保存',
-          )
+        const localSnapshot = JSON.stringify(local)
+        if (localSnapshot !== cloud.workspaceJson) {
+          const useCloud = chooseCloudOnConflict()
           if (useCloud) {
             setWorkspace(parsedCloud)
             setLastSyncAt(Date.now())
@@ -809,17 +833,17 @@ function App() {
       return
     }
 
-    if (debouncedCloudSaveRef.current) {
-      window.clearTimeout(debouncedCloudSaveRef.current)
+    if (autoSyncTimerRef.current) {
+      window.clearTimeout(autoSyncTimerRef.current)
     }
 
-    debouncedCloudSaveRef.current = window.setTimeout(() => {
-      void saveWorkspaceToCloud(workspaceRef.current, '自動同期で')
+    autoSyncTimerRef.current = window.setTimeout(() => {
+      void saveWorkspaceToCloud(workspaceRef.current, '自動同期で', true)
     }, SYNC_DEBOUNCE_MS)
 
     return () => {
-      if (debouncedCloudSaveRef.current) {
-        window.clearTimeout(debouncedCloudSaveRef.current)
+      if (autoSyncTimerRef.current) {
+        window.clearTimeout(autoSyncTimerRef.current)
       }
     }
   }, [workspace, isLoaded, saveWorkspaceToCloud, syncSettings])
@@ -1587,7 +1611,7 @@ function App() {
                   type="url"
                   value={syncSettings.gasUrl}
                   onChange={(event) => {
-                    setSyncSettings((prev) => ({ ...prev, gasUrl: event.target.value.trim() }))
+                    setSyncSettings((prev) => ({ ...prev, gasUrl: event.target.value }))
                   }}
                   placeholder="https://script.google.com/macros/s/.../exec"
                 />
@@ -1598,7 +1622,7 @@ function App() {
                   type="text"
                   value={syncSettings.spreadsheetRef}
                   onChange={(event) => {
-                    setSyncSettings((prev) => ({ ...prev, spreadsheetRef: event.target.value.trim() }))
+                    setSyncSettings((prev) => ({ ...prev, spreadsheetRef: event.target.value }))
                   }}
                   placeholder="https://docs.google.com/spreadsheets/d/... または ID"
                 />
@@ -1609,7 +1633,7 @@ function App() {
                   type="text"
                   value={syncSettings.syncKey}
                   onChange={(event) => {
-                    setSyncSettings((prev) => ({ ...prev, syncKey: event.target.value.trim() }))
+                    setSyncSettings((prev) => ({ ...prev, syncKey: event.target.value }))
                   }}
                   placeholder="同じ値を全端末で設定"
                 />
@@ -1620,7 +1644,7 @@ function App() {
                   type="text"
                   value={syncSettings.deviceId}
                   onChange={(event) => {
-                    setSyncSettings((prev) => ({ ...prev, deviceId: event.target.value.trim() }))
+                    setSyncSettings((prev) => ({ ...prev, deviceId: event.target.value }))
                   }}
                   placeholder="my-laptop"
                 />
