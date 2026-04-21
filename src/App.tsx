@@ -2069,7 +2069,7 @@ function App() {
               aria-labelledby="sync-guide-dialog-title"
               onClick={(event) => event.stopPropagation()}
             >
-              <button type="button" autoFocus onClick={() => setIsSyncGuideOpen(false)}>
+              <button type="button" aria-label="閉じる" autoFocus onClick={() => setIsSyncGuideOpen(false)}>
                 閉じる
               </button>
               <h3 id="sync-guide-dialog-title">Google同期セットアップガイド</h3>
@@ -2081,10 +2081,10 @@ function App() {
                 <li>「接続テスト」→「今すぐ同期」で動作確認します。</li>
               </ol>
               <div className="sync-template-actions">
-                <button type="button" onClick={() => void copySyncTemplate()}>
+                <button type="button" onClick={copySyncTemplate}>
                   GASコードをコピー
                 </button>
-                {syncGuideCopyMessage ? <p className="muted">{syncGuideCopyMessage}</p> : null}
+                {syncGuideCopyMessage ? <p className="muted" aria-live="polite">{syncGuideCopyMessage}</p> : null}
               </div>
               <pre className="sync-template-code">{googleSyncTemplate}</pre>
             </div>
