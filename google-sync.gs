@@ -71,15 +71,21 @@ function doPost(e) {
     const spreadsheet = openSpreadsheetFromBody_(body)
     const sheet = ensureSheet_(spreadsheet)
     const nowIso = new Date().toISOString()
+    const lock = LockService.getScriptLock()
 
-    const row = findRowBySyncKey_(sheet, syncKey)
-    if (!row) {
-      sheet.appendRow([syncKey, workspaceJson, updatedAt, deviceId, nowIso, nowIso])
-    } else {
-      sheet.getRange(row.rowIndex, 2).setValue(workspaceJson)
-      sheet.getRange(row.rowIndex, 3).setValue(updatedAt)
-      sheet.getRange(row.rowIndex, 4).setValue(deviceId)
-      sheet.getRange(row.rowIndex, 6).setValue(nowIso)
+    lock.waitLock(30000)
+    try {
+      const row = findRowBySyncKey_(sheet, syncKey)
+      if (!row) {
+        sheet.appendRow([syncKey, workspaceJson, updatedAt, deviceId, nowIso, nowIso])
+      } else {
+        sheet.getRange(row.rowIndex, 2).setValue(workspaceJson)
+        sheet.getRange(row.rowIndex, 3).setValue(updatedAt)
+        sheet.getRange(row.rowIndex, 4).setValue(deviceId)
+        sheet.getRange(row.rowIndex, 6).setValue(nowIso)
+      }
+    } finally {
+      lock.releaseLock()
     }
 
     return jsonResponse_({
