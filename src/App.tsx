@@ -192,15 +192,18 @@ function normalizeCloudRecord(value: SyncApiResponse['data']): CloudRecord | nul
 
 async function callSyncApiGet(settings: SyncSettings, action: 'get' | 'test'): Promise<SyncApiResponse> {
   const spreadsheetId = extractSpreadsheetId(settings.spreadsheetRef)
-  const url = new URL(settings.gasUrl)
-  url.searchParams.set('action', action)
-  url.searchParams.set('syncKey', settings.syncKey.trim())
-  url.searchParams.set('spreadsheetId', spreadsheetId)
-  url.searchParams.set('deviceId', settings.deviceId.trim())
-
-  const response = await fetch(url.toString(), {
-    method: 'GET',
+  const response = await fetch(settings.gasUrl, {
+    method: 'POST',
     cache: 'no-store',
+    headers: {
+      'Content-Type': 'text/plain;charset=utf-8',
+    },
+    body: JSON.stringify({
+      action,
+      syncKey: settings.syncKey.trim(),
+      spreadsheetId,
+      deviceId: settings.deviceId.trim(),
+    }),
   })
   return parseSyncResponse(response)
 }
