@@ -143,8 +143,16 @@ function extractSpreadsheetId(input: string): string {
 }
 
 function isSyncConfigured(settings: SyncSettings): boolean {
+  let gasUrlValid = false
+  try {
+    const url = new URL(settings.gasUrl.trim())
+    gasUrlValid = url.protocol === 'https:'
+  } catch {
+    gasUrlValid = false
+  }
+
   return Boolean(
-    settings.gasUrl.trim()
+    gasUrlValid
     && settings.syncKey.trim()
     && extractSpreadsheetId(settings.spreadsheetRef),
   )
@@ -520,6 +528,7 @@ function App() {
   const searchInputRef = useRef<HTMLInputElement>(null)
   const commandInputRef = useRef<HTMLInputElement>(null)
   const workspaceRef = useRef(workspace)
+  const isSyncingRef = useRef(false)
   const startupSyncCompletedRef = useRef(false)
   const autoSyncTimerRef = useRef<number | null>(null)
   const lastSyncedWorkspaceSnapshotRef = useRef<string>('')
@@ -527,6 +536,10 @@ function App() {
   useEffect(() => {
     workspaceRef.current = workspace
   }, [workspace])
+
+  useEffect(() => {
+    isSyncingRef.current = isSyncing
+  }, [isSyncing])
 
   useEffect(() => {
     try {
@@ -836,7 +849,7 @@ function App() {
   }, [isLoaded, loadCloudRecord, saveWorkspaceToCloud, syncSettings])
 
   useEffect(() => {
-    if (!isLoaded || !startupSyncCompletedRef.current || !isSyncConfigured(syncSettings)) {
+    if (!isLoaded || isSyncing || !startupSyncCompletedRef.current || !isSyncConfigured(syncSettings)) {
       return
     }
 
@@ -845,6 +858,9 @@ function App() {
     }
 
     autoSyncTimerRef.current = window.setTimeout(() => {
+      if (isSyncingRef.current) {
+        return
+      }
       void saveWorkspaceToCloud(workspaceRef.current, '自動同期で', true)
     }, SYNC_DEBOUNCE_MS)
 
@@ -853,7 +869,7 @@ function App() {
         window.clearTimeout(autoSyncTimerRef.current)
       }
     }
-  }, [workspace, isLoaded, saveWorkspaceToCloud, syncSettings])
+  }, [workspace, isLoaded, isSyncing, saveWorkspaceToCloud, syncSettings])
 
   useEffect(() => {
     if (!contextMenu) {
