@@ -40,7 +40,8 @@
 
 .sidebar button,
 .context-menu button,
-.search-box input {
+.search-box input,
+.modal-panel button {
   border: 1px solid #d0d7e2;
   background: #fff;
   border-radius: 8px;
