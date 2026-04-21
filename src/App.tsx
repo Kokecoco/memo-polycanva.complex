@@ -888,7 +888,7 @@ function App() {
         return
       }
 
-      if (!event.shiftKey && key === 'p') {
+      if (!targetIsEditable && !event.shiftKey && key === 'p') {
         event.preventDefault()
         openCommandPalette()
         return
@@ -1230,8 +1230,8 @@ function App() {
 
         {contextMenu ? (
           <div className="context-menu" style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}>
-            {pageMenuTarget ? (
-              pageContextPage?.isTrashed ? (
+            {pageMenuTarget && pageContextPage ? (
+              pageContextPage.isTrashed ? (
                 <>
                   <button type="button" onClick={() => restorePage(pageMenuTarget.pageId)}>
                     復元
@@ -1249,7 +1249,7 @@ function App() {
                     名前を変更
                   </button>
                   <button type="button" onClick={() => togglePin(pageMenuTarget.pageId)}>
-                    {pageContextPage?.isPinned ? 'ピン留め解除' : 'ピン留め'}
+                    {pageContextPage.isPinned ? 'ピン留め解除' : 'ピン留め'}
                   </button>
                   <button type="button" onClick={() => movePageToRoot(pageMenuTarget.pageId)}>
                     ルートへ移動
@@ -1289,7 +1289,7 @@ function App() {
                       完全削除
                     </button>
                   </>
-                ) : (
+                ) : editorContextPage ? (
                   <>
                     <button type="button" onClick={() => addPage(editorMenuPageId)}>
                       子ページを作成
@@ -1309,7 +1309,7 @@ function App() {
                       ごみ箱へ移動
                     </button>
                   </>
-                )
+                ) : null
               ) : (
                 <button type="button" onClick={() => addPage(null)}>
                   ルートページを作成
@@ -1327,8 +1327,14 @@ function App() {
               setIsCommandPaletteOpen(false)
             }}
           >
-            <div className="modal-panel command-palette" onClick={(event) => event.stopPropagation()}>
-              <h3>コマンド</h3>
+            <div
+              className="modal-panel command-palette"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="command-palette-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h3 id="command-palette-title">コマンド</h3>
               <input
                 ref={commandInputRef}
                 type="text"
