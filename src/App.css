@@ -4,7 +4,6 @@
 
 .app-layout {
   display: grid;
-  grid-template-columns: 320px 1fr;
   min-height: 100vh;
   background: #f7f8fa;
   color: #1f2937;
@@ -23,6 +22,7 @@
   gap: 12px;
   max-height: 100vh;
   overflow: auto;
+  position: relative;
 }
 
 .sidebar.collapsed {
@@ -42,6 +42,43 @@
 .sidebar-toggle-button {
   width: 36px;
   text-align: center;
+}
+
+.sidebar-icon-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-icon-button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 3;
+}
+
+.sidebar-resize-handle:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+.app-layout.sidebar-resizing,
+.app-layout.sidebar-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
 }
 
 .sidebar-header {

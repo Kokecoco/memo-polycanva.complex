@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import type { ChangeEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import type { PartialBlock } from '@blocknote/core'
 import { BlockNoteView } from '@blocknote/mantine'
 import { useCreateBlockNote } from '@blocknote/react'
@@ -83,7 +83,15 @@ const MAX_SEARCH_RESULTS = 20
 const SYNC_DEBOUNCE_MS = 1800
 const MAX_SYNC_JSON_BYTES = 900000
 const SYNC_CONFLICT_PROMPT_MESSAGE = '同じ更新時刻の競合を検知しました。\nOK: クラウドを採用\nキャンセル: ローカルを採用して上書き保存'
+const SIDEBAR_WIDTH_STORAGE_KEY = 'memo-polycanva.sidebar-width'
+const DEFAULT_SIDEBAR_WIDTH = 320
+const MIN_SIDEBAR_WIDTH = 240
+const MAX_SIDEBAR_WIDTH = 520
 let fallbackIdCounter = 0
+
+function clampSidebarWidth(value: number): number {
+  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, Math.round(value)))
+}
 
 const defaultContent: PartialBlock[] = [
   {
@@ -551,6 +559,12 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [showTrash, setShowTrash] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const raw = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
+    const parsed = raw ? Number(raw) : DEFAULT_SIDEBAR_WIDTH
+    return Number.isFinite(parsed) ? clampSidebarWidth(parsed) : DEFAULT_SIDEBAR_WIDTH
+  })
+  const [isSidebarResizing, setIsSidebarResizing] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const commandInputRef = useRef<HTMLInputElement>(null)
@@ -575,6 +589,10 @@ function App() {
       console.warn('Failed to persist sync settings to localStorage. Using in-memory settings only.', error)
     }
   }, [syncSettings])
+
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth))
+  }, [sidebarWidth])
 
   useEffect(() => {
     startupSyncCompletedRef.current = false
@@ -1504,6 +1522,27 @@ function App() {
     }
   }, [addPage, closeSyncGuide, isCommandPaletteOpen, isHelpOpen, isSyncGuideOpen, movePageToTrash, openCommandPalette, renamePage, selectedPage, togglePin])
 
+  useEffect(() => {
+    if (!isSidebarResizing || isSidebarCollapsed) {
+      return
+    }
+
+    const onMouseMove = (event: MouseEvent) => {
+      setSidebarWidth(clampSidebarWidth(event.clientX))
+    }
+    const onMouseUp = () => {
+      setIsSidebarResizing(false)
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [isSidebarCollapsed, isSidebarResizing])
+
   const nonTrashedRootPageIds = useMemo(
     () => workspace.rootPageIds.filter((rootId) => {
       const page = workspace.pages[rootId]
@@ -1570,6 +1609,11 @@ function App() {
     openContextMenu(event, { kind: 'page', pageId })
   }, [openContextMenu])
 
+  const startSidebarResize = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    setIsSidebarResizing(true)
+  }, [])
+
   const pageMenuTarget = contextMenu?.target.kind === 'page' ? contextMenu.target : null
   const editorMenuTarget = contextMenu?.target.kind === 'editor' ? contextMenu.target : null
   const editorMenuPageId = editorMenuTarget?.pageId ?? null
@@ -1634,7 +1678,10 @@ function App() {
 
   return (
     <MantineProvider>
-      <div className={`app-layout${isSidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
+      <div
+        className={`app-layout${isSidebarCollapsed ? ' sidebar-collapsed' : ''}${isSidebarResizing ? ' sidebar-resizing' : ''}`}
+        style={{ gridTemplateColumns: `${isSidebarCollapsed ? 56 : sidebarWidth}px 1fr` }}
+      >
         <aside
           className={`sidebar${isSidebarCollapsed ? ' collapsed' : ''}`}
           onContextMenu={(event) => {
@@ -1656,6 +1703,16 @@ function App() {
               {isSidebarCollapsed ? '▶' : '◀'}
             </button>
           </div>
+
+          <input
+            ref={importInputRef}
+            className="hidden-input"
+            type="file"
+            accept="application/json"
+            onChange={(event) => {
+              void importJson(event)
+            }}
+          />
 
           {!isSidebarCollapsed ? (
             <>
@@ -1682,15 +1739,6 @@ function App() {
                 <button type="button" onClick={() => setIsSyncSettingsOpen((previous) => !previous)}>
                   {isSyncSettingsOpen ? '同期設定を閉じる' : '同期設定'}
                 </button>
-                <input
-                  ref={importInputRef}
-                  className="hidden-input"
-                  type="file"
-                  accept="application/json"
-                  onChange={(event) => {
-                    void importJson(event)
-                  }}
-                />
               </div>
 
               {isSyncSettingsOpen ? (
@@ -1879,6 +1927,39 @@ function App() {
             </section>
               )}
             </>
+          ) : (
+            <div className="sidebar-icon-actions">
+              <button type="button" className="sidebar-icon-button" onClick={() => addPage(null)} aria-label="ルートページ追加" title="ルートページ追加">
+                ➕
+              </button>
+              <button type="button" className="sidebar-icon-button" onClick={() => openCommandPalette('/')} aria-label="コマンド" title="コマンド">
+                ⌘
+              </button>
+              <button type="button" className="sidebar-icon-button" onClick={() => setShowTrash((previous) => !previous)} aria-label={showTrash ? '通常表示へ切替' : 'ごみ箱を表示'} title={showTrash ? '通常表示へ切替' : 'ごみ箱を表示'}>
+                {showTrash ? '📄' : '🗑️'}
+              </button>
+              <button type="button" className="sidebar-icon-button" onClick={() => setIsSyncSettingsOpen((previous) => !previous)} aria-label={isSyncSettingsOpen ? '同期設定を閉じる' : '同期設定'} title={isSyncSettingsOpen ? '同期設定を閉じる' : '同期設定'}>
+                ☁️
+              </button>
+              <button type="button" className="sidebar-icon-button" onClick={() => downloadJson(workspace)} aria-label="JSONエクスポート" title="JSONエクスポート">
+                📤
+              </button>
+              <button type="button" className="sidebar-icon-button" onClick={() => importInputRef.current?.click()} aria-label="JSONインポート" title="JSONインポート">
+                📥
+              </button>
+              <button type="button" className="sidebar-icon-button" onClick={openHelpWindow} aria-label="ヘルプ" title="ヘルプ">
+                ❔
+              </button>
+            </div>
+          )}
+          {!isSidebarCollapsed ? (
+            <div
+              className="sidebar-resize-handle"
+              onMouseDown={startSidebarResize}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="サイドバー幅を調整"
+            />
           ) : null}
         </aside>
 
