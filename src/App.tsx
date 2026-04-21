@@ -88,7 +88,7 @@ let fallbackIdCounter = 0
 const defaultContent: PartialBlock[] = [
   {
     type: 'paragraph',
-    content: 'ここにメモを書いてください。',
+    content: '',
   },
 ]
 
