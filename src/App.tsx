@@ -566,6 +566,7 @@ function App() {
   })
   const [isSidebarResizing, setIsSidebarResizing] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
+  const sidebarRef = useRef<HTMLElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const commandInputRef = useRef<HTMLInputElement>(null)
   const workspaceRef = useRef(workspace)
@@ -1528,7 +1529,8 @@ function App() {
     }
 
     const onMouseMove = (event: MouseEvent) => {
-      setSidebarWidth(clampSidebarWidth(event.clientX))
+      const sidebarLeft = sidebarRef.current?.getBoundingClientRect().left ?? 0
+      setSidebarWidth(clampSidebarWidth(event.clientX - sidebarLeft))
     }
     const onMouseUp = () => {
       setIsSidebarResizing(false)
@@ -1614,6 +1616,16 @@ function App() {
     setIsSidebarResizing(true)
   }, [])
 
+  const onSidebarResizeHandleKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+      return
+    }
+
+    event.preventDefault()
+    const delta = event.key === 'ArrowLeft' ? -16 : 16
+    setSidebarWidth((previousWidth) => clampSidebarWidth(previousWidth + delta))
+  }, [])
+
   const pageMenuTarget = contextMenu?.target.kind === 'page' ? contextMenu.target : null
   const editorMenuTarget = contextMenu?.target.kind === 'editor' ? contextMenu.target : null
   const editorMenuPageId = editorMenuTarget?.pageId ?? null
@@ -1683,6 +1695,7 @@ function App() {
         style={{ gridTemplateColumns: `${isSidebarCollapsed ? 56 : sidebarWidth}px 1fr` }}
       >
         <aside
+          ref={sidebarRef}
           className={`sidebar${isSidebarCollapsed ? ' collapsed' : ''}`}
           onContextMenu={(event) => {
             const target = event.target as HTMLElement
@@ -1709,6 +1722,7 @@ function App() {
             className="hidden-input"
             type="file"
             accept="application/json"
+            aria-label="JSONファイルをインポート"
             onChange={(event) => {
               void importJson(event)
             }}
@@ -1956,9 +1970,14 @@ function App() {
             <div
               className="sidebar-resize-handle"
               onMouseDown={startSidebarResize}
+              onKeyDown={onSidebarResizeHandleKeyDown}
               role="separator"
               aria-orientation="vertical"
+              aria-valuemin={MIN_SIDEBAR_WIDTH}
+              aria-valuemax={MAX_SIDEBAR_WIDTH}
+              aria-valuenow={sidebarWidth}
               aria-label="サイドバー幅を調整"
+              tabIndex={0}
             />
           ) : null}
         </aside>
