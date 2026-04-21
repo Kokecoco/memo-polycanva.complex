@@ -148,7 +148,7 @@ function isSyncConfigured(settings: SyncSettings): boolean {
     const url = new URL(settings.gasUrl.trim())
     gasUrlValid = url.protocol === 'https:'
   } catch {
-    gasUrlValid = false
+    // noop
   }
 
   return Boolean(
