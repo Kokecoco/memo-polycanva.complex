@@ -1410,6 +1410,18 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (!syncGuideCopyMessage) {
+      return
+    }
+    const timerId = window.setTimeout(() => {
+      setSyncGuideCopyMessage(null)
+    }, 4000)
+    return () => {
+      window.clearTimeout(timerId)
+    }
+  }, [syncGuideCopyMessage])
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setContextMenu(null)
@@ -1723,10 +1735,7 @@ function App() {
                 </p>
                 <button
                   type="button"
-                  onClick={() => {
-                    setSyncGuideCopyMessage(null)
-                    setIsSyncGuideOpen(true)
-                  }}
+                  onClick={() => setIsSyncGuideOpen(true)}
                 >
                   セットアップ手順とGASコードを表示
                 </button>
