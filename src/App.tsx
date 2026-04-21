@@ -526,7 +526,11 @@ function App() {
   }, [workspace])
 
   useEffect(() => {
-    localStorage.setItem(SYNC_SETTINGS_STORAGE_KEY, JSON.stringify(syncSettings))
+    try {
+      localStorage.setItem(SYNC_SETTINGS_STORAGE_KEY, JSON.stringify(syncSettings))
+    } catch (error) {
+      console.warn('Failed to persist sync settings to localStorage. Using in-memory settings only.', error)
+    }
   }, [syncSettings])
 
   useEffect(() => {
