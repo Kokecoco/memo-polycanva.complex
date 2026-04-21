@@ -1404,13 +1404,18 @@ function App() {
     }
   }, [])
 
+  const closeSyncGuide = useCallback(() => {
+    setIsSyncGuideOpen(false)
+    setSyncGuideCopyMessage(null)
+  }, [])
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setContextMenu(null)
         setIsHelpOpen(false)
         setIsCommandPaletteOpen(false)
-        setIsSyncGuideOpen(false)
+        closeSyncGuide()
         return
       }
 
@@ -1485,7 +1490,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [addPage, isCommandPaletteOpen, isHelpOpen, isSyncGuideOpen, movePageToTrash, openCommandPalette, renamePage, selectedPage, togglePin])
+  }, [addPage, closeSyncGuide, isCommandPaletteOpen, isHelpOpen, isSyncGuideOpen, movePageToTrash, openCommandPalette, renamePage, selectedPage, togglePin])
 
   const nonTrashedRootPageIds = useMemo(
     () => workspace.rootPageIds.filter((rootId) => {
@@ -2058,9 +2063,7 @@ function App() {
           <div
             className="modal-backdrop"
             role="presentation"
-            onClick={() => {
-              setIsSyncGuideOpen(false)
-            }}
+            onClick={closeSyncGuide}
           >
             <div
               className="modal-panel sync-guide-modal"
@@ -2069,7 +2072,7 @@ function App() {
               aria-labelledby="sync-guide-dialog-title"
               onClick={(event) => event.stopPropagation()}
             >
-              <button type="button" aria-label="閉じる" autoFocus onClick={() => setIsSyncGuideOpen(false)}>
+              <button type="button" aria-label="閉じる" onClick={closeSyncGuide}>
                 閉じる
               </button>
               <h3 id="sync-guide-dialog-title">Google同期セットアップガイド</h3>
