@@ -29,10 +29,25 @@ interface Workspace {
   selectedPageId: PageId
 }
 
+type ContextMenuTarget =
+  | { kind: 'page'; pageId: PageId }
+  | { kind: 'sidebar' }
+  | { kind: 'editor'; pageId: PageId | null }
+
 interface ContextMenuState {
-  pageId: PageId
+  target: ContextMenuTarget
   x: number
   y: number
+}
+
+interface CommandAction {
+  id: string
+  label: string
+  description: string
+  shortcut?: string
+  tags: string[]
+  prefixes?: Array<'/' | '@'>
+  disabled?: boolean
 }
 
 const DB_NAME = 'memo-polycanva'
@@ -253,6 +268,19 @@ function formatDateTime(timestamp: number): string {
   })
 }
 
+function isEditableElement(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  const tagName = target.tagName
+  return target.isContentEditable
+    || tagName === 'INPUT'
+    || tagName === 'TEXTAREA'
+    || tagName === 'SELECT'
+    || target.closest('[contenteditable="true"]') !== null
+}
+
 function downloadJson(workspace: Workspace): void {
   const now = new Date()
   const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
@@ -286,10 +314,14 @@ function App() {
   const [workspace, setWorkspace] = useState<Workspace>(() => createDefaultWorkspace())
   const [isLoaded, setIsLoaded] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [isHelpOpen, setIsHelpOpen] = useState(false)
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
+  const [commandQuery, setCommandQuery] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [showTrash, setShowTrash] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const commandInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let mounted = true
@@ -330,6 +362,15 @@ function App() {
       window.removeEventListener('click', hide)
     }
   }, [contextMenu])
+
+  useEffect(() => {
+    if (!isCommandPaletteOpen) {
+      return
+    }
+
+    commandInputRef.current?.focus()
+    commandInputRef.current?.select()
+  }, [isCommandPaletteOpen])
 
   const addPage = useCallback((parentId: PageId | null) => {
     setWorkspace((previousWorkspace) => {
@@ -635,23 +676,251 @@ function App() {
     event.target.value = ''
   }, [])
 
+  const openHelpWindow = useCallback(() => {
+    setIsHelpOpen(true)
+    setContextMenu(null)
+  }, [])
+
+  const openCommandPalette = useCallback((prefix = '') => {
+    setCommandQuery(prefix)
+    setIsCommandPaletteOpen(true)
+    setContextMenu(null)
+  }, [])
+
+  const selectedPage = workspace.pages[workspace.selectedPageId] ?? null
+
+  const commandActions = useMemo<CommandAction[]>(() => {
+    const canEditSelected = Boolean(selectedPage && !selectedPage.isTrashed)
+
+    return [
+      {
+        id: 'create-root',
+        label: '/new ルートページを作成',
+        description: '新しいルートページを追加します',
+        shortcut: 'Ctrl/Cmd + Shift + N',
+        tags: ['new', 'root', 'page', 'ルート', '作成'],
+        prefixes: ['/'],
+      },
+      {
+        id: 'create-child',
+        label: '@child 子ページを作成',
+        description: '現在のページの子ページを追加します',
+        shortcut: 'Ctrl/Cmd + N',
+        tags: ['child', 'sub', '子ページ', '作成'],
+        prefixes: ['@'],
+        disabled: !canEditSelected,
+      },
+      {
+        id: 'rename-page',
+        label: '@rename ページ名を変更',
+        description: '現在のページ名を変更します',
+        shortcut: 'Ctrl/Cmd + R',
+        tags: ['rename', 'title', '名前変更', 'ページ名'],
+        prefixes: ['@'],
+        disabled: !canEditSelected,
+      },
+      {
+        id: 'toggle-pin',
+        label: '@pin ピン留め切替',
+        description: '現在のページのピン留めを切り替えます',
+        shortcut: 'Ctrl/Cmd + Shift + P',
+        tags: ['pin', 'favorite', 'ピン', '固定'],
+        prefixes: ['@'],
+        disabled: !canEditSelected,
+      },
+      {
+        id: 'move-trash',
+        label: '@trash ごみ箱へ移動',
+        description: '現在のページをごみ箱に移動します',
+        shortcut: 'Ctrl/Cmd + Delete',
+        tags: ['trash', 'delete', 'ごみ箱', '削除'],
+        prefixes: ['@'],
+        disabled: !canEditSelected,
+      },
+      {
+        id: 'focus-search',
+        label: '/search 検索にフォーカス',
+        description: '検索欄へフォーカスします',
+        shortcut: 'Ctrl/Cmd + K',
+        tags: ['search', 'find', '検索'],
+        prefixes: ['/'],
+      },
+      {
+        id: 'export-json',
+        label: '/export JSONエクスポート',
+        description: 'ワークスペースをJSON出力します',
+        tags: ['export', 'json', 'backup', '出力'],
+        prefixes: ['/'],
+      },
+      {
+        id: 'import-json',
+        label: '/import JSONインポート',
+        description: 'JSONファイルを読み込みます',
+        tags: ['import', 'json', '読み込み'],
+        prefixes: ['/'],
+      },
+      {
+        id: 'toggle-trash-view',
+        label: '/trash ごみ箱表示切替',
+        description: '通常表示とごみ箱表示を切り替えます',
+        tags: ['trash', 'view', 'ごみ箱', '表示'],
+        prefixes: ['/'],
+      },
+      {
+        id: 'open-help',
+        label: '/help ヘルプを開く',
+        description: 'ショートカットとコマンド一覧を表示します',
+        shortcut: 'Ctrl/Cmd + /',
+        tags: ['help', 'shortcut', 'コマンド', 'ヘルプ'],
+        prefixes: ['/'],
+      },
+    ]
+  }, [selectedPage])
+
+  const filteredCommands = useMemo(() => {
+    const query = commandQuery.trim().toLowerCase()
+    const prefix = query.startsWith('@') ? '@' : query.startsWith('/') ? '/' : null
+    const normalized = query.replace(/^[@/]/, '')
+
+    return commandActions.filter((action) => {
+      if (action.disabled) {
+        return false
+      }
+
+      if (prefix && action.prefixes && !action.prefixes.includes(prefix)) {
+        return false
+      }
+
+      if (!normalized) {
+        return true
+      }
+
+      return action.tags.some((tag) => tag.includes(normalized))
+        || action.label.toLowerCase().includes(normalized)
+        || action.description.toLowerCase().includes(normalized)
+    })
+  }, [commandActions, commandQuery])
+
+  const executeCommand = useCallback((command: CommandAction) => {
+    switch (command.id) {
+      case 'create-root':
+        addPage(null)
+        break
+      case 'create-child':
+        if (selectedPage && !selectedPage.isTrashed) {
+          addPage(selectedPage.id)
+        }
+        break
+      case 'rename-page':
+        if (selectedPage && !selectedPage.isTrashed) {
+          renamePage(selectedPage.id)
+        }
+        break
+      case 'toggle-pin':
+        if (selectedPage && !selectedPage.isTrashed) {
+          togglePin(selectedPage.id)
+        }
+        break
+      case 'move-trash':
+        if (selectedPage && !selectedPage.isTrashed) {
+          movePageToTrash(selectedPage.id)
+        }
+        break
+      case 'focus-search':
+        searchInputRef.current?.focus()
+        break
+      case 'export-json':
+        downloadJson(workspace)
+        break
+      case 'import-json':
+        importInputRef.current?.click()
+        break
+      case 'toggle-trash-view':
+        setShowTrash((previous) => !previous)
+        break
+      case 'open-help':
+        openHelpWindow()
+        break
+      default:
+        break
+    }
+    setIsCommandPaletteOpen(false)
+    setCommandQuery('')
+  }, [addPage, movePageToTrash, openHelpWindow, renamePage, selectedPage, togglePin, workspace])
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setContextMenu(null)
+        setIsHelpOpen(false)
+        setIsCommandPaletteOpen(false)
+        return
+      }
+
+      if (isCommandPaletteOpen || isHelpOpen) {
+        return
+      }
+
+      if (!event.ctrlKey && !event.metaKey) {
+        if ((event.key === '/' || event.key === '@') && !isEditableElement(event.target)) {
+          event.preventDefault()
+          openCommandPalette(event.key)
+        }
+        return
+      }
+
       const withMeta = event.ctrlKey || event.metaKey
       if (!withMeta) {
         return
       }
 
       const key = event.key.toLowerCase()
+      const targetIsEditable = isEditableElement(event.target)
       if (key === 'k') {
         event.preventDefault()
         searchInputRef.current?.focus()
         return
       }
 
+      if (!targetIsEditable && event.shiftKey && key === 'p' && selectedPage && !selectedPage.isTrashed) {
+        event.preventDefault()
+        togglePin(selectedPage.id)
+        return
+      }
+
+      if (!targetIsEditable && !event.shiftKey && key === 'p') {
+        event.preventDefault()
+        openCommandPalette()
+        return
+      }
+
+      if (key === '/' || key === '?') {
+        event.preventDefault()
+        setIsHelpOpen((previous) => !previous)
+        return
+      }
+
       if (event.shiftKey && key === 'n') {
         event.preventDefault()
         addPage(null)
+        return
+      }
+
+      if (!targetIsEditable && key === 'n' && selectedPage && !selectedPage.isTrashed) {
+        event.preventDefault()
+        addPage(selectedPage.id)
+        return
+      }
+
+      if (!targetIsEditable && key === 'r' && selectedPage && !selectedPage.isTrashed) {
+        event.preventDefault()
+        renamePage(selectedPage.id)
+        return
+      }
+
+      if (!targetIsEditable && (key === 'backspace' || key === 'delete') && selectedPage && !selectedPage.isTrashed) {
+        event.preventDefault()
+        movePageToTrash(selectedPage.id)
       }
     }
 
@@ -659,7 +928,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [addPage])
+  }, [addPage, isCommandPaletteOpen, isHelpOpen, movePageToTrash, openCommandPalette, renamePage, selectedPage, togglePin])
 
   const nonTrashedRootPageIds = useMemo(
     () => workspace.rootPageIds.filter((rootId) => {
@@ -709,17 +978,27 @@ function App() {
       .slice(0, MAX_SEARCH_RESULTS)
   }, [searchQuery, searchableTextByPageId, workspace.pages])
 
-  const activePage = workspace.pages[workspace.selectedPageId]
+  const activePage = selectedPage
   const displayedPage = activePage && (showTrash ? activePage.isTrashed : !activePage.isTrashed) ? activePage : null
 
-  const openContextMenu = useCallback((event: { clientX: number; clientY: number; preventDefault: () => void }, pageId: PageId) => {
+  const openContextMenu = useCallback((event: { clientX: number; clientY: number; preventDefault: () => void }, target: ContextMenuTarget) => {
     event.preventDefault()
     setContextMenu({
-      pageId,
+      target,
       x: event.clientX,
       y: event.clientY,
     })
   }, [])
+
+  const openPageContextMenu = useCallback((event: { clientX: number; clientY: number; preventDefault: () => void }, pageId: PageId) => {
+    openContextMenu(event, { kind: 'page', pageId })
+  }, [openContextMenu])
+
+  const pageMenuTarget = contextMenu?.target.kind === 'page' ? contextMenu.target : null
+  const editorMenuTarget = contextMenu?.target.kind === 'editor' ? contextMenu.target : null
+  const editorMenuPageId = editorMenuTarget?.pageId ?? null
+  const pageContextPage = pageMenuTarget ? workspace.pages[pageMenuTarget.pageId] : null
+  const editorContextPage = editorMenuPageId ? workspace.pages[editorMenuPageId] : null
 
   function renderPageTree(pageIds: PageId[], depth = 0): ReactNode {
     return pageIds.map((pageId) => {
@@ -743,7 +1022,7 @@ function App() {
               setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: pageId }))
             }}
             onContextMenu={(event) => {
-              openContextMenu(event, pageId)
+              openPageContextMenu(event, pageId)
             }}
             role="button"
             tabIndex={0}
@@ -780,7 +1059,16 @@ function App() {
   return (
     <MantineProvider>
       <div className="app-layout">
-        <aside className="sidebar">
+        <aside
+          className="sidebar"
+          onContextMenu={(event) => {
+            const target = event.target as HTMLElement
+            if (target.closest('.page-item, .list-item, input, button')) {
+              return
+            }
+            openContextMenu(event, { kind: 'sidebar' })
+          }}
+        >
           <div className="sidebar-header">
             <h1>Memo Polycanva</h1>
             <button type="button" onClick={() => addPage(null)}>
@@ -794,6 +1082,12 @@ function App() {
             </button>
             <button type="button" onClick={() => importInputRef.current?.click()}>
               JSONインポート
+            </button>
+            <button type="button" onClick={() => openCommandPalette('/')}>
+              コマンド
+            </button>
+            <button type="button" onClick={openHelpWindow}>
+              ヘルプ
             </button>
             <input
               ref={importInputRef}
@@ -839,7 +1133,7 @@ function App() {
                         setShowTrash(false)
                         setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
                       }}
-                      onContextMenu={(event) => openContextMenu(event, page.id)}
+                       onContextMenu={(event) => openPageContextMenu(event, page.id)}
                     >
                       {page.isPinned ? '📌 ' : ''}
                       {page.title}
@@ -863,7 +1157,7 @@ function App() {
                         setShowTrash(false)
                         setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
                       }}
-                      onContextMenu={(event) => openContextMenu(event, page.id)}
+                       onContextMenu={(event) => openPageContextMenu(event, page.id)}
                     >
                       📌 {page.title}
                     </button>
@@ -887,7 +1181,7 @@ function App() {
                         setShowTrash(true)
                         setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
                       }}
-                      onContextMenu={(event) => openContextMenu(event, page.id)}
+                        onContextMenu={(event) => openPageContextMenu(event, page.id)}
                     >
                       🗑️ {page.title}
                     </button>
@@ -903,7 +1197,16 @@ function App() {
           )}
         </aside>
 
-        <main className="editor-area">
+        <main
+          className="editor-area"
+          onContextMenu={(event) => {
+            const target = event.target as HTMLElement
+            if (target.closest('.context-menu, .modal-panel')) {
+              return
+            }
+            openContextMenu(event, { kind: 'editor', pageId: displayedPage?.id ?? null })
+          }}
+        >
           {displayedPage ? (
             <>
               <header className="editor-header">
@@ -927,34 +1230,172 @@ function App() {
 
         {contextMenu ? (
           <div className="context-menu" style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}>
-            {workspace.pages[contextMenu.pageId]?.isTrashed ? (
+            {pageMenuTarget && pageContextPage ? (
+              pageContextPage.isTrashed ? (
+                <>
+                  <button type="button" onClick={() => restorePage(pageMenuTarget.pageId)}>
+                    復元
+                  </button>
+                  <button type="button" className="danger" onClick={() => permanentlyDeletePage(pageMenuTarget.pageId)}>
+                    完全削除
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button type="button" onClick={() => addPage(pageMenuTarget.pageId)}>
+                    子ページを作成
+                  </button>
+                  <button type="button" onClick={() => renamePage(pageMenuTarget.pageId)}>
+                    名前を変更
+                  </button>
+                  <button type="button" onClick={() => togglePin(pageMenuTarget.pageId)}>
+                    {pageContextPage.isPinned ? 'ピン留め解除' : 'ピン留め'}
+                  </button>
+                  <button type="button" onClick={() => movePageToRoot(pageMenuTarget.pageId)}>
+                    ルートへ移動
+                  </button>
+                  <button type="button" className="danger" onClick={() => movePageToTrash(pageMenuTarget.pageId)}>
+                    ごみ箱へ移動
+                  </button>
+                </>
+              )
+            ) : null}
+
+            {contextMenu.target.kind === 'sidebar' ? (
               <>
-                <button type="button" onClick={() => restorePage(contextMenu.pageId)}>
-                  復元
+                <button type="button" onClick={() => addPage(null)}>
+                  ルートページを作成
                 </button>
-                <button type="button" className="danger" onClick={() => permanentlyDeletePage(contextMenu.pageId)}>
-                  完全削除
+                <button type="button" onClick={() => setShowTrash((previous) => !previous)}>
+                  {showTrash ? '通常表示へ切替' : 'ごみ箱を表示'}
+                </button>
+                <button type="button" onClick={() => openCommandPalette('/')}>
+                  コマンドを開く
+                </button>
+                <button type="button" onClick={openHelpWindow}>
+                  ヘルプを開く
                 </button>
               </>
-            ) : (
-              <>
-                <button type="button" onClick={() => addPage(contextMenu.pageId)}>
-                  子ページを作成
+            ) : null}
+
+            {editorMenuTarget ? (
+              editorMenuPageId ? (
+                editorContextPage?.isTrashed ? (
+                  <>
+                    <button type="button" onClick={() => restorePage(editorMenuPageId)}>
+                      復元
+                    </button>
+                    <button type="button" className="danger" onClick={() => permanentlyDeletePage(editorMenuPageId)}>
+                      完全削除
+                    </button>
+                  </>
+                ) : editorContextPage ? (
+                  <>
+                    <button type="button" onClick={() => addPage(editorMenuPageId)}>
+                      子ページを作成
+                    </button>
+                    <button type="button" onClick={() => renamePage(editorMenuPageId)}>
+                      名前を変更
+                    </button>
+                    <button type="button" onClick={() => togglePin(editorMenuPageId)}>
+                      {editorContextPage?.isPinned ? 'ピン留め解除' : 'ピン留め'}
+                    </button>
+                    {editorContextPage?.parentId ? (
+                      <button type="button" onClick={() => movePageToRoot(editorContextPage.id)}>
+                        ルートへ移動
+                      </button>
+                    ) : null}
+                    <button type="button" className="danger" onClick={() => movePageToTrash(editorMenuPageId)}>
+                      ごみ箱へ移動
+                    </button>
+                  </>
+                ) : null
+              ) : (
+                <button type="button" onClick={() => addPage(null)}>
+                  ルートページを作成
                 </button>
-                <button type="button" onClick={() => renamePage(contextMenu.pageId)}>
-                  名前を変更
-                </button>
-                <button type="button" onClick={() => togglePin(contextMenu.pageId)}>
-                  {workspace.pages[contextMenu.pageId]?.isPinned ? 'ピン留め解除' : 'ピン留め'}
-                </button>
-                <button type="button" onClick={() => movePageToRoot(contextMenu.pageId)}>
-                  ルートへ移動
-                </button>
-                <button type="button" className="danger" onClick={() => movePageToTrash(contextMenu.pageId)}>
-                  ごみ箱へ移動
-                </button>
-              </>
-            )}
+              )
+            ) : null}
+          </div>
+        ) : null}
+
+        {isCommandPaletteOpen ? (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onClick={() => {
+              setIsCommandPaletteOpen(false)
+            }}
+          >
+            <div
+              className="modal-panel command-palette"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="command-palette-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h3 id="command-palette-title">コマンド</h3>
+              <input
+                ref={commandInputRef}
+                type="text"
+                value={commandQuery}
+                placeholder="コマンドを入力（/ か @ で絞り込み）"
+                onChange={(event) => setCommandQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && filteredCommands[0]) {
+                    event.preventDefault()
+                    executeCommand(filteredCommands[0])
+                  }
+                }}
+              />
+              <ul className="command-list">
+                {filteredCommands.length === 0 ? <li className="muted">一致するコマンドがありません</li> : null}
+                {filteredCommands.map((command) => (
+                  <li key={command.id}>
+                    <button type="button" onClick={() => executeCommand(command)}>
+                      <span>{command.label}</span>
+                      {command.shortcut ? <kbd>{command.shortcut}</kbd> : null}
+                    </button>
+                    <p className="muted">{command.description}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        ) : null}
+
+        {isHelpOpen ? (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onClick={() => {
+              setIsHelpOpen(false)
+            }}
+          >
+            <div
+              className="modal-panel help-window"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="help-dialog-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button type="button" autoFocus onClick={() => setIsHelpOpen(false)}>
+                閉じる
+              </button>
+              <h3 id="help-dialog-title">ショートカット / コマンドヘルプ</h3>
+              <ul>
+                <li><kbd>Ctrl/Cmd + K</kbd> 検索欄へフォーカス</li>
+                <li><kbd>Ctrl/Cmd + Shift + N</kbd> ルートページ作成</li>
+                <li><kbd>Ctrl/Cmd + N</kbd> 子ページ作成</li>
+                <li><kbd>Ctrl/Cmd + R</kbd> 現在ページの名前変更</li>
+                <li><kbd>Ctrl/Cmd + Shift + P</kbd> ピン留め切替</li>
+                <li><kbd>Ctrl/Cmd + Delete</kbd> 現在ページをごみ箱へ移動</li>
+                <li><kbd>Ctrl/Cmd + P</kbd> コマンドパレットを開く</li>
+                <li><kbd>Ctrl/Cmd + /</kbd> ヘルプを開く</li>
+                <li><kbd>/</kbd> または <kbd>@</kbd> コマンドパレットを接頭辞付きで開く</li>
+              </ul>
+              <p className="muted">例: <code>/new</code>, <code>/help</code>, <code>@rename</code>, <code>@trash</code></p>
+            </div>
           </div>
         ) : null}
       </div>

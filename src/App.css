@@ -167,7 +167,7 @@
 
 .context-menu {
   position: fixed;
-  width: 170px;
+  width: 220px;
   border: 1px solid #d0d7e2;
   background: #fff;
   border-radius: 10px;
@@ -188,4 +188,88 @@
   display: grid;
   place-items: center;
   font-size: 1rem;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  display: grid;
+  place-items: center;
+  z-index: 120;
+}
+
+.modal-panel {
+  width: min(680px, 92vw);
+  max-height: 85vh;
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid #d0d7e2;
+  background: #fff;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.25);
+  padding: 16px;
+}
+
+.modal-panel h3 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.command-palette input {
+  width: 100%;
+  border: 1px solid #d0d7e2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.command-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.command-list li {
+  border: 1px solid #e5e9f0;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.command-list li button {
+  width: 100%;
+  border: none;
+  background: transparent;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0;
+}
+
+.command-list li p {
+  margin: 6px 0 0;
+}
+
+kbd {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  padding: 2px 6px;
+}
+
+.help-window ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.help-window code {
+  background: #f3f4f6;
+  border-radius: 6px;
+  padding: 2px 5px;
 }
