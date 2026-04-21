@@ -148,7 +148,7 @@ function isSyncConfigured(settings: SyncSettings): boolean {
     const url = new URL(settings.gasUrl.trim())
     gasUrlValid = url.protocol === 'https:'
   } catch {
-    // noop
+    // Invalid GAS URL should be treated as not configured.
   }
 
   return Boolean(
@@ -858,6 +858,7 @@ function App() {
     }
 
     autoSyncTimerRef.current = window.setTimeout(() => {
+      // Prevent overlapping sync requests when another sync started during debounce wait.
       if (isSyncingRef.current) {
         return
       }
