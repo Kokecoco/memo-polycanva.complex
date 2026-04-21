@@ -1650,6 +1650,8 @@ function App() {
               type="button"
               className="sidebar-toggle-button"
               onClick={() => setIsSidebarCollapsed((previous) => !previous)}
+              aria-label={isSidebarCollapsed ? 'サイドバーを展開' : 'サイドバーを折り畳み'}
+              title={isSidebarCollapsed ? 'サイドバーを展開' : 'サイドバーを折り畳み'}
             >
               {isSidebarCollapsed ? '▶' : '◀'}
             </button>
