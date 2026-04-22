@@ -645,11 +645,6 @@ function App() {
     void saveWorkspaceToIndexedDB(workspace)
   }, [workspace, isLoaded])
 
-  useEffect(() => {
-    setSelectedPageIds((previous) => previous.filter((pageId) => Boolean(workspace.pages[pageId])))
-    setCollapsedPageIds((previous) => previous.filter((pageId) => Boolean(workspace.pages[pageId])))
-  }, [workspace.pages])
-
   const loadCloudRecord = useCallback(async (): Promise<CloudRecord | null> => {
     if (!isSyncConfigured(syncSettings)) {
       return null
@@ -1078,7 +1073,6 @@ function App() {
   }, [])
 
   const movePageToTrash = useCallback((pageId: PageId) => {
-    setSelectedPageIds((previous) => (previous.includes(pageId) ? previous : [pageId]))
     setWorkspace((previousWorkspace) => {
       const selectedTargets = selectedPageIds.includes(pageId) ? selectedPageIds : [pageId]
       const targetIds = selectedTargets.filter((id) => {
@@ -1126,7 +1120,6 @@ function App() {
   }, [selectedPageIds])
 
   const restorePage = useCallback((pageId: PageId) => {
-    setSelectedPageIds((previous) => (previous.includes(pageId) ? previous : [pageId]))
     setWorkspace((previousWorkspace) => {
       const selectedTargets = selectedPageIds.includes(pageId) ? selectedPageIds : [pageId]
       const targetIds = selectedTargets.filter((id) => {
@@ -1717,9 +1710,11 @@ function App() {
         return previousWorkspace
       }
 
+      const draggedIndex = siblings.indexOf(draggedId)
       const reordered = siblings.filter((id) => id !== draggedId)
       const targetIndex = reordered.indexOf(targetId)
-      reordered.splice(targetIndex, 0, draggedId)
+      const insertIndex = draggedIndex < siblings.indexOf(targetId) ? targetIndex + 1 : targetIndex
+      reordered.splice(insertIndex, 0, draggedId)
 
       if (dragged.parentId) {
         const parent = previousWorkspace.pages[dragged.parentId]
@@ -1745,6 +1740,30 @@ function App() {
       }
     })
   }, [])
+
+  const bulkMoveSelectedToTrash = useCallback(() => {
+    const targetId = selectedVisiblePageIds[0]
+    if (!targetId) {
+      return
+    }
+    movePageToTrash(targetId)
+  }, [movePageToTrash, selectedVisiblePageIds])
+
+  const bulkRestoreSelected = useCallback(() => {
+    const targetId = selectedVisiblePageIds[0]
+    if (!targetId) {
+      return
+    }
+    restorePage(targetId)
+  }, [restorePage, selectedVisiblePageIds])
+
+  const bulkPermanentlyDeleteSelected = useCallback(() => {
+    const targetId = selectedVisiblePageIds[0]
+    if (!targetId) {
+      return
+    }
+    permanentlyDeletePage(targetId)
+  }, [permanentlyDeletePage, selectedVisiblePageIds])
 
   const openContextMenu = useCallback((event: { clientX: number; clientY: number; preventDefault: () => void }, target: ContextMenuTarget) => {
     event.preventDefault()
@@ -1828,7 +1847,11 @@ function App() {
             onKeyDown={(event: ReactKeyboardEvent<HTMLDivElement>) => {
               if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault()
-                selectSinglePage(pageId)
+                if (event.metaKey || event.ctrlKey) {
+                  togglePageSelection(pageId)
+                } else {
+                  selectSinglePage(pageId)
+                }
                 setShowTrash(false)
                 setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: pageId }))
               }
@@ -1848,7 +1871,7 @@ function App() {
                 {isCollapsed ? '▸' : '▾'}
               </button>
             ) : (
-              <span className="tree-toggle-placeholder" aria-hidden="true">•</span>
+              <span className="tree-toggle-placeholder" aria-hidden="true" />
             )}
             <input
               type="checkbox"
@@ -2034,15 +2057,15 @@ function App() {
                 <h2>選択中 ({selectedVisiblePageIds.length})</h2>
                 <div className="selection-actions">
                   {!showTrash ? (
-                    <button type="button" disabled={selectedVisiblePageIds.length === 0} onClick={() => movePageToTrash(selectedVisiblePageIds[0] ?? workspace.selectedPageId)}>
+                    <button type="button" disabled={selectedVisiblePageIds.length === 0} onClick={bulkMoveSelectedToTrash}>
                       選択中を一括でごみ箱へ移動
                     </button>
                   ) : (
                     <>
-                      <button type="button" disabled={selectedVisiblePageIds.length === 0} onClick={() => restorePage(selectedVisiblePageIds[0] ?? workspace.selectedPageId)}>
+                      <button type="button" disabled={selectedVisiblePageIds.length === 0} onClick={bulkRestoreSelected}>
                         選択中を一括で復元
                       </button>
-                      <button type="button" className="danger" disabled={selectedVisiblePageIds.length === 0} onClick={() => permanentlyDeletePage(selectedVisiblePageIds[0] ?? workspace.selectedPageId)}>
+                      <button type="button" className="danger" disabled={selectedVisiblePageIds.length === 0} onClick={bulkPermanentlyDeleteSelected}>
                         選択中を一括で完全削除
                       </button>
                     </>
@@ -2253,7 +2276,7 @@ function App() {
                     復元
                   </button>
                   {selectedVisiblePageIds.length > 1 ? (
-                    <button type="button" onClick={() => restorePage(selectedVisiblePageIds[0])}>
+                    <button type="button" onClick={bulkRestoreSelected}>
                       選択中をまとめて復元 ({selectedVisiblePageIds.length})
                     </button>
                   ) : null}
@@ -2261,7 +2284,7 @@ function App() {
                     完全削除
                   </button>
                   {selectedVisiblePageIds.length > 1 ? (
-                    <button type="button" className="danger" onClick={() => permanentlyDeletePage(selectedVisiblePageIds[0])}>
+                    <button type="button" className="danger" onClick={bulkPermanentlyDeleteSelected}>
                       選択中をまとめて完全削除 ({selectedVisiblePageIds.length})
                     </button>
                   ) : null}
@@ -2292,7 +2315,7 @@ function App() {
                     ごみ箱へ移動
                   </button>
                   {selectedVisiblePageIds.length > 1 ? (
-                    <button type="button" className="danger" onClick={() => movePageToTrash(selectedVisiblePageIds[0])}>
+                    <button type="button" className="danger" onClick={bulkMoveSelectedToTrash}>
                       選択中をまとめてごみ箱へ移動 ({selectedVisiblePageIds.length})
                     </button>
                   ) : null}
