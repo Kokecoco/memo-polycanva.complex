@@ -121,15 +121,17 @@ const codeBlockSupportedLanguages: Record<string, { name: string; aliases?: stri
   java: { name: 'Java' },
 }
 
+const codeBlockHighlighter = createHighlighter({
+  themes: ['github-light', 'github-dark'],
+  langs: Object.keys(codeBlockSupportedLanguages).filter((language) => language !== 'text'),
+})
+
 const codeBlockSchema = BlockNoteSchema.create({
   blockSpecs: {
     ...defaultBlockSpecs,
     codeBlock: createCodeBlockSpec({
       supportedLanguages: codeBlockSupportedLanguages,
-      createHighlighter: () => createHighlighter({
-        themes: ['github-light', 'github-dark'],
-        langs: Object.keys(codeBlockSupportedLanguages).filter((language) => language !== 'text'),
-      }),
+      createHighlighter: () => codeBlockHighlighter,
     }),
   },
 })
