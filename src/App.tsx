@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import { BlockNoteSchema, createCodeBlockSpec, defaultBlockSpecs } from '@blocknote/core'
 import type { PartialBlock } from '@blocknote/core'
 import { BlockNoteView } from '@blocknote/mantine'
 import { useCreateBlockNote } from '@blocknote/react'
 import { MantineProvider } from '@mantine/core'
+import { createHighlighter } from 'shiki'
 import '@mantine/core/styles.css'
 import '@blocknote/core/fonts/inter.css'
 import '@blocknote/mantine/style.css'
@@ -99,6 +101,40 @@ const defaultContent: PartialBlock[] = [
     content: '',
   },
 ]
+
+const codeBlockSupportedLanguages: Record<string, { name: string; aliases?: string[] }> = {
+  text: { name: 'Plain Text', aliases: ['plaintext', 'txt'] },
+  javascript: { name: 'JavaScript', aliases: ['js'] },
+  typescript: { name: 'TypeScript', aliases: ['ts'] },
+  jsx: { name: 'JSX' },
+  tsx: { name: 'TSX' },
+  json: { name: 'JSON' },
+  html: { name: 'HTML' },
+  css: { name: 'CSS' },
+  bash: { name: 'Bash', aliases: ['sh', 'shell', 'zsh'] },
+  markdown: { name: 'Markdown', aliases: ['md'] },
+  yaml: { name: 'YAML', aliases: ['yml'] },
+  sql: { name: 'SQL' },
+  python: { name: 'Python', aliases: ['py'] },
+  go: { name: 'Go' },
+  rust: { name: 'Rust', aliases: ['rs'] },
+  java: { name: 'Java' },
+}
+
+const codeBlockHighlighterPromise = createHighlighter({
+  themes: ['github-light', 'github-dark'],
+  langs: Object.keys(codeBlockSupportedLanguages).filter((language) => language !== 'text'),
+})
+
+const codeBlockSchema = BlockNoteSchema.create({
+  blockSpecs: {
+    ...defaultBlockSpecs,
+    codeBlock: createCodeBlockSpec({
+      supportedLanguages: codeBlockSupportedLanguages,
+      createHighlighter: () => codeBlockHighlighterPromise,
+    }),
+  },
+})
 
 function createDefaultSyncSettings(): SyncSettings {
   const randomSuffix = (() => {
@@ -529,7 +565,7 @@ function downloadJson(workspace: Workspace): void {
 
 function Editor({ content, onContentChange }: { content: string; onContentChange: (content: string) => void }) {
   const initialContent = useMemo(() => parseContent(content), [content])
-  const editor = useCreateBlockNote({ initialContent })
+  const editor = useCreateBlockNote({ schema: codeBlockSchema, initialContent })
 
   return (
     <BlockNoteView
