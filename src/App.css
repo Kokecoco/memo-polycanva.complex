@@ -413,7 +413,7 @@
 
 .sidebar-accordion > summary::before {
   content: '▸';
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: #64748b;
   transform: rotate(0deg);
   transition: transform 0.15s ease;

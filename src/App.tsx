@@ -2526,8 +2526,8 @@ function App() {
                   JSONエクスポート
                 </button>
                 <button type="button" onClick={() => {
-                  setIsSidebarToolsOpen(false)
                   importInputRef.current?.click()
+                  setIsSidebarToolsOpen(false)
                 }}>
                   JSONインポート
                 </button>
