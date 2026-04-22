@@ -161,7 +161,7 @@
   gap: 8px;
 }
 
-.sidebar button,
+.sidebar button:not(.tree-toggle):not(.inline-add),
 .context-menu button,
 .search-box input,
 .modal-panel button {
@@ -229,13 +229,13 @@
   cursor: pointer;
 }
 
-.sidebar button:hover,
+.sidebar button:not(.tree-toggle):not(.inline-add):hover,
 .context-menu button:hover {
   background: #f5f8ff;
   border-color: #b8c3d8;
 }
 
-.sidebar button:focus-visible,
+.sidebar button:not(.tree-toggle):not(.inline-add):focus-visible,
 .search-box input:focus-visible {
   outline: none;
   border-color: #93c5fd;
@@ -274,8 +274,10 @@
 
 .sidebar-section h2 {
   margin: 0;
-  font-size: 0.78rem;
-  color: #4b5563;
+  font-size: 0.75rem;
+  color: #64748b;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .flat-list,
@@ -344,25 +346,92 @@
 
 .tree-toggle,
 .tree-toggle-placeholder {
-  width: 18px;
+  width: 20px;
+  height: 20px;
   text-align: center;
   font-size: 0.82rem;
+  flex-shrink: 0;
 }
 
 .tree-toggle {
   border: none;
   background: transparent;
-  border-radius: 6px;
+  border-radius: 999px;
   padding: 0;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .tree-toggle:hover {
-  background: #e5e7eb;
+  background: #e9eef8;
+  color: #334155;
+}
+
+.tree-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.35);
+}
+
+.tree-toggle-chevron {
+  transform-origin: center;
+  transition: transform 0.16s ease;
+}
+
+.tree-toggle-chevron.is-collapsed {
+  transform: rotate(-90deg);
 }
 
 .tree-toggle-placeholder {
   color: #9ca3af;
+}
+
+.sidebar-accordion {
+  border: 1px solid #e5e9f0;
+  border-radius: 8px;
+  background: #fbfcff;
+}
+
+.sidebar-accordion > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  color: #334155;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-accordion > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sidebar-accordion > summary::before {
+  content: '▸';
+  font-size: 0.72rem;
+  color: #64748b;
+  transform: rotate(0deg);
+  transition: transform 0.15s ease;
+}
+
+.sidebar-accordion[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.sidebar-accordion[open] > summary {
+  border-bottom: 1px solid #e5e9f0;
+}
+
+.accordion-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
 }
 
 .inline-add {
@@ -415,6 +484,10 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.sidebar-tools-modal {
+  width: min(420px, 92vw);
 }
 
 .page-select-checkbox {
