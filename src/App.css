@@ -54,6 +54,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  cursor: pointer;
   border: 1px solid transparent;
   background: transparent;
   color: #475569;
@@ -378,13 +379,15 @@
   justify-content: center;
   color: #64748b;
   opacity: 0;
+  visibility: hidden;
   transform: scale(0.95);
-  transition: opacity 0.12s ease, transform 0.12s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: opacity 0.12s ease, transform 0.12s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, visibility 0.12s ease;
 }
 
 .page-item:hover .inline-add,
 .page-item:focus-within .inline-add {
   opacity: 1;
+  visibility: visible;
   transform: scale(1);
 }
 
@@ -396,6 +399,7 @@
 
 .inline-add:focus-visible {
   opacity: 1;
+  visibility: visible;
   outline: none;
   border-color: #93c5fd;
   box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.35);
@@ -443,8 +447,8 @@
 }
 
 .page-select-checkbox:checked {
-  border-color: #507df5;
-  background: linear-gradient(135deg, #6590ff, #4f7bf1);
+  border-color: #1d4ed8;
+  background: #2563eb;
 }
 
 .page-select-checkbox:checked::after {
@@ -455,6 +459,13 @@
   outline: none;
   border-color: #93c5fd;
   box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.35);
+}
+
+.page-select-checkbox:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-color: #cbd5e1;
+  background: #f1f5f9;
 }
 
 .editor-area {
