@@ -1875,6 +1875,7 @@ function App() {
             )}
             <input
               type="checkbox"
+              className="page-select-checkbox"
               checked={isSelected}
               aria-label={`${page.title}を選択`}
               onClick={(event) => event.stopPropagation()}
@@ -1927,7 +1928,10 @@ function App() {
               aria-label={isSidebarCollapsed ? 'サイドバーを展開' : 'サイドバーを折り畳み'}
               title={isSidebarCollapsed ? 'サイドバーを展開' : 'サイドバーを折り畳み'}
             >
-              {isSidebarCollapsed ? '▶' : '◀'}
+              <span className={`sidebar-toggle-chevron${isSidebarCollapsed ? ' is-collapsed' : ''}`} aria-hidden="true">
+                ▾
+              </span>
+              <span className="sidebar-toggle-label">サイドバー</span>
             </button>
           </div>
 
@@ -2035,6 +2039,7 @@ function App() {
                     >
                       <input
                         type="checkbox"
+                        className="page-select-checkbox"
                         checked={selectedPageIdSet.has(page.id)}
                         aria-label={`${page.title}を選択`}
                         onClick={(event) => event.stopPropagation()}

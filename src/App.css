@@ -37,23 +37,71 @@
 }
 
 .sidebar-collapse-toggle {
-  display: flex;
-  justify-content: flex-end;
+  display: block;
   position: sticky;
   top: 0;
   z-index: 2;
   background: inherit;
-  padding-bottom: 4px;
+  padding-bottom: 6px;
 }
 
 .sidebar.collapsed .sidebar-collapse-toggle {
-  justify-content: center;
+  padding-bottom: 2px;
 }
 
-.sidebar-toggle-button {
-  width: 36px;
-  text-align: center;
-  font-weight: 700;
+.sidebar .sidebar-toggle-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #475569;
+  border-radius: 8px;
+  padding: 7px 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.sidebar .sidebar-toggle-button:hover {
+  background: #edf2ff;
+  border-color: #d6def0;
+}
+
+.sidebar .sidebar-toggle-button:focus-visible {
+  outline: none;
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.35);
+}
+
+.sidebar-toggle-chevron {
+  width: 14px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform-origin: center;
+  transition: transform 0.16s ease;
+}
+
+.sidebar-toggle-chevron.is-collapsed {
+  transform: rotate(-90deg);
+}
+
+.sidebar-toggle-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar.collapsed .sidebar-toggle-button {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.sidebar.collapsed .sidebar-toggle-label {
+  display: none;
 }
 
 .sidebar-icon-actions {
@@ -264,6 +312,8 @@
   cursor: pointer;
   user-select: none;
   font-size: 0.9rem;
+  border: 1px solid transparent;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .page-item:hover {
@@ -276,7 +326,8 @@
 }
 
 .page-item.selected {
-  outline: 1px solid #93c5fd;
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 1px rgba(147, 197, 253, 0.35);
 }
 
 .page-item.dragging {
@@ -315,11 +366,43 @@
 }
 
 .inline-add {
-  border: none;
-  background: transparent;
-  font-size: 1rem;
+  border: 1px solid transparent;
+  background: #f8fafc;
+  font-size: 0.95rem;
   line-height: 1;
-  padding: 0 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.95);
+  transition: opacity 0.12s ease, transform 0.12s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, visibility 0.12s ease;
+}
+
+.page-item:hover .inline-add,
+.page-item:focus-within .inline-add {
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1);
+}
+
+.inline-add:hover {
+  background: #eef2ff;
+  border-color: #cdd9f4;
+  color: #334155;
+}
+
+.inline-add:focus-visible {
+  opacity: 1;
+  visibility: visible;
+  outline: none;
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.35);
 }
 
 .selection-tools {
@@ -332,6 +415,57 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.page-select-checkbox {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  border: 1px solid #c4ccdc;
+  background: #ffffff;
+  display: inline-grid;
+  place-content: center;
+  margin: 0;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.page-select-checkbox::after {
+  content: '';
+  width: 4px;
+  height: 8px;
+  border-right: 2px solid #ffffff;
+  border-bottom: 2px solid #ffffff;
+  transform: rotate(45deg) scale(0);
+  transform-origin: center;
+  transition: transform 0.12s ease;
+}
+
+.page-select-checkbox:hover {
+  border-color: #99a6c3;
+}
+
+.page-select-checkbox:checked {
+  border-color: #1d4ed8;
+  background: #2563eb;
+}
+
+.page-select-checkbox:checked::after {
+  transform: rotate(45deg) scale(1);
+}
+
+.page-select-checkbox:focus-visible {
+  outline: none;
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.35);
+}
+
+.page-select-checkbox:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-color: #cbd5e1;
+  background: #f1f5f9;
 }
 
 .editor-area {
