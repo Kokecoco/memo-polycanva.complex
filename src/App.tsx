@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import type { ChangeEvent, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import type { PartialBlock } from '@blocknote/core'
 import { BlockNoteView } from '@blocknote/mantine'
 import { useCreateBlockNote } from '@blocknote/react'
@@ -423,6 +423,20 @@ function collectDescendants(pages: Record<PageId, MemoPage>, targetId: PageId): 
   return collected
 }
 
+function collectWithDescendants(pages: Record<PageId, MemoPage>, targetIds: PageId[]): PageId[] {
+  const collected = new Set<PageId>()
+  for (const targetId of targetIds) {
+    if (!pages[targetId]) {
+      continue
+    }
+    collected.add(targetId)
+    for (const childId of collectDescendants(pages, targetId)) {
+      collected.add(childId)
+    }
+  }
+  return Array.from(collected)
+}
+
 function findFirstPageId(workspace: Workspace, wantTrashed: boolean): PageId | null {
   for (const rootId of workspace.rootPageIds) {
     const rootPage = workspace.pages[rootId]
@@ -565,6 +579,9 @@ function App() {
     return Number.isFinite(parsed) ? clampSidebarWidth(parsed) : DEFAULT_SIDEBAR_WIDTH
   })
   const [isSidebarResizing, setIsSidebarResizing] = useState(false)
+  const [selectedPageIds, setSelectedPageIds] = useState<PageId[]>([])
+  const [collapsedPageIds, setCollapsedPageIds] = useState<PageId[]>([])
+  const [draggingPageId, setDraggingPageId] = useState<PageId | null>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
   const sidebarRef = useRef<HTMLElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -940,8 +957,10 @@ function App() {
   }, [isCommandPaletteOpen])
 
   const addPage = useCallback((parentId: PageId | null) => {
+    let createdPageId: PageId | null = null
     setWorkspace((previousWorkspace) => {
       const nextPage = createPage(parentId)
+      createdPageId = nextPage.id
       const nextPages = {
         ...previousWorkspace.pages,
         [nextPage.id]: nextPage,
@@ -963,6 +982,7 @@ function App() {
       }
     })
     setShowTrash(false)
+    setSelectedPageIds(createdPageId ? [createdPageId] : [])
     setContextMenu(null)
   }, [])
 
@@ -1054,13 +1074,17 @@ function App() {
 
   const movePageToTrash = useCallback((pageId: PageId) => {
     setWorkspace((previousWorkspace) => {
-      const targetPage = previousWorkspace.pages[pageId]
-      if (!targetPage || targetPage.isTrashed) {
+      const selectedTargets = selectedPageIds.includes(pageId) ? selectedPageIds : [pageId]
+      const targetIds = selectedTargets.filter((id) => {
+        const page = previousWorkspace.pages[id]
+        return page && !page.isTrashed
+      })
+      if (targetIds.length === 0) {
         return previousWorkspace
       }
 
       const now = Date.now()
-      const allTrashIds = [pageId, ...collectDescendants(previousWorkspace.pages, pageId)]
+      const allTrashIds = collectWithDescendants(previousWorkspace.pages, targetIds)
       const trashSet = new Set(allTrashIds)
       const nextPages = {
         ...previousWorkspace.pages,
@@ -1093,17 +1117,21 @@ function App() {
     })
 
     setContextMenu(null)
-  }, [])
+  }, [selectedPageIds])
 
   const restorePage = useCallback((pageId: PageId) => {
     setWorkspace((previousWorkspace) => {
-      const targetPage = previousWorkspace.pages[pageId]
-      if (!targetPage || !targetPage.isTrashed) {
+      const selectedTargets = selectedPageIds.includes(pageId) ? selectedPageIds : [pageId]
+      const targetIds = selectedTargets.filter((id) => {
+        const page = previousWorkspace.pages[id]
+        return page && page.isTrashed
+      })
+      if (targetIds.length === 0) {
         return previousWorkspace
       }
 
       const now = Date.now()
-      const allRestoreIds = [pageId, ...collectDescendants(previousWorkspace.pages, pageId)]
+      const allRestoreIds = collectWithDescendants(previousWorkspace.pages, targetIds)
       const restoreSet = new Set(allRestoreIds)
       const nextPages = {
         ...previousWorkspace.pages,
@@ -1151,21 +1179,31 @@ function App() {
 
     setShowTrash(false)
     setContextMenu(null)
-  }, [])
+    setSelectedPageIds([])
+  }, [selectedPageIds])
 
   const permanentlyDeletePage = useCallback((pageId: PageId) => {
-    const accepted = window.confirm('このページと子ページを完全に削除します。元に戻せません。続行しますか？')
+    const selectedTargets = selectedPageIds.includes(pageId) ? selectedPageIds : [pageId]
+    const targetCount = selectedTargets.length
+    const accepted = window.confirm(
+      targetCount > 1
+        ? `選択中の ${targetCount} ページ（子ページ含む）を完全に削除します。元に戻せません。続行しますか？`
+        : 'このページと子ページを完全に削除します。元に戻せません。続行しますか？',
+    )
     if (!accepted) {
       return
     }
 
     setWorkspace((previousWorkspace) => {
-      const targetPage = previousWorkspace.pages[pageId]
-      if (!targetPage || !targetPage.isTrashed) {
+      const targetIds = selectedTargets.filter((id) => {
+        const page = previousWorkspace.pages[id]
+        return page && page.isTrashed
+      })
+      if (targetIds.length === 0) {
         return previousWorkspace
       }
 
-      const allDeleteIds = [pageId, ...collectDescendants(previousWorkspace.pages, pageId)]
+      const allDeleteIds = collectWithDescendants(previousWorkspace.pages, targetIds)
       const deleteSet = new Set(allDeleteIds)
       const nextPages = Object.fromEntries(
         Object.entries(previousWorkspace.pages)
@@ -1199,7 +1237,8 @@ function App() {
     })
 
     setContextMenu(null)
-  }, [])
+    setSelectedPageIds([])
+  }, [selectedPageIds])
 
   const onPageContentChange = useCallback((pageId: PageId, content: string) => {
     setWorkspace((previousWorkspace) => {
@@ -1597,6 +1636,134 @@ function App() {
   const displayedPage = activePage && (showTrash ? activePage.isTrashed : !activePage.isTrashed) ? activePage : null
   const syncConfigured = isSyncConfigured(syncSettings)
   const lastSyncLabel = lastSyncAt ? formatDateTime(lastSyncAt) : '未実行'
+  const selectedPageIdSet = useMemo(() => new Set(selectedPageIds), [selectedPageIds])
+  const selectedVisiblePageIds = useMemo(
+    () => selectedPageIds.filter((pageId) => {
+      const page = workspace.pages[pageId]
+      return page && page.isTrashed === showTrash
+    }),
+    [selectedPageIds, showTrash, workspace.pages],
+  )
+
+  const togglePageSelection = useCallback((pageId: PageId) => {
+    setSelectedPageIds((previous) => (
+      previous.includes(pageId)
+        ? previous.filter((id) => id !== pageId)
+        : [...previous, pageId]
+    ))
+  }, [])
+
+  const selectSinglePage = useCallback((pageId: PageId) => {
+    setSelectedPageIds([pageId])
+  }, [])
+
+  const handlePageClick = useCallback((event: ReactMouseEvent<HTMLElement>, pageId: PageId, openTrash: boolean) => {
+    if (event.metaKey || event.ctrlKey) {
+      togglePageSelection(pageId)
+    } else {
+      selectSinglePage(pageId)
+    }
+    setShowTrash(openTrash)
+    setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: pageId }))
+  }, [selectSinglePage, togglePageSelection])
+
+  const togglePageCollapsed = useCallback((pageId: PageId) => {
+    setCollapsedPageIds((previous) => (
+      previous.includes(pageId)
+        ? previous.filter((id) => id !== pageId)
+        : [...previous, pageId]
+    ))
+  }, [])
+
+  const collapseAllTreeNodes = useCallback(() => {
+    const ids = Object.values(workspace.pages)
+      .filter((page) => !page.isTrashed && page.childrenIds.some((childId) => {
+        const child = workspace.pages[childId]
+        return Boolean(child && !child.isTrashed)
+      }))
+      .map((page) => page.id)
+    setCollapsedPageIds(ids)
+    setContextMenu(null)
+  }, [workspace.pages])
+
+  const expandAllTreeNodes = useCallback(() => {
+    setCollapsedPageIds([])
+    setContextMenu(null)
+  }, [])
+
+  const reorderPageWithinSiblings = useCallback((draggedId: PageId, targetId: PageId) => {
+    if (draggedId === targetId) {
+      return
+    }
+
+    setWorkspace((previousWorkspace) => {
+      const dragged = previousWorkspace.pages[draggedId]
+      const target = previousWorkspace.pages[targetId]
+      if (!dragged || !target || dragged.isTrashed || target.isTrashed || dragged.parentId !== target.parentId) {
+        return previousWorkspace
+      }
+
+      const siblings = dragged.parentId
+        ? previousWorkspace.pages[dragged.parentId]?.childrenIds
+        : previousWorkspace.rootPageIds
+      if (!siblings || !siblings.includes(draggedId) || !siblings.includes(targetId)) {
+        return previousWorkspace
+      }
+
+      const draggedIndex = siblings.indexOf(draggedId)
+      const reordered = siblings.filter((id) => id !== draggedId)
+      const targetIndex = reordered.indexOf(targetId)
+      const insertIndex = draggedIndex < siblings.indexOf(targetId) ? targetIndex + 1 : targetIndex
+      reordered.splice(insertIndex, 0, draggedId)
+
+      if (dragged.parentId) {
+        const parent = previousWorkspace.pages[dragged.parentId]
+        if (!parent) {
+          return previousWorkspace
+        }
+        return {
+          ...previousWorkspace,
+          pages: {
+            ...previousWorkspace.pages,
+            [parent.id]: {
+              ...parent,
+              childrenIds: reordered,
+              updatedAt: Date.now(),
+            },
+          },
+        }
+      }
+
+      return {
+        ...previousWorkspace,
+        rootPageIds: reordered,
+      }
+    })
+  }, [])
+
+  const bulkMoveSelectedToTrash = useCallback(() => {
+    const targetId = selectedVisiblePageIds[0]
+    if (!targetId) {
+      return
+    }
+    movePageToTrash(targetId)
+  }, [movePageToTrash, selectedVisiblePageIds])
+
+  const bulkRestoreSelected = useCallback(() => {
+    const targetId = selectedVisiblePageIds[0]
+    if (!targetId) {
+      return
+    }
+    restorePage(targetId)
+  }, [restorePage, selectedVisiblePageIds])
+
+  const bulkPermanentlyDeleteSelected = useCallback(() => {
+    const targetId = selectedVisiblePageIds[0]
+    if (!targetId) {
+      return
+    }
+    permanentlyDeletePage(targetId)
+  }, [permanentlyDeletePage, selectedVisiblePageIds])
 
   const openContextMenu = useCallback((event: { clientX: number; clientY: number; preventDefault: () => void }, target: ContextMenuTarget) => {
     event.preventDefault()
@@ -1608,6 +1775,7 @@ function App() {
   }, [])
 
   const openPageContextMenu = useCallback((event: { clientX: number; clientY: number; preventDefault: () => void }, pageId: PageId) => {
+    setSelectedPageIds((previous) => (previous.includes(pageId) ? previous : [pageId]))
     openContextMenu(event, { kind: 'page', pageId })
   }, [openContextMenu])
 
@@ -1643,30 +1811,76 @@ function App() {
         const child = workspace.pages[childId]
         return child && !child.isTrashed
       })
+      const hasChildren = visibleChildren.length > 0
+      const isCollapsed = collapsedPageIds.includes(pageId)
+      const isSelected = selectedPageIdSet.has(pageId)
 
       return (
         <li key={pageId}>
           <div
-            className={`page-item${workspace.selectedPageId === pageId && !showTrash ? ' active' : ''}`}
+            className={`page-item${workspace.selectedPageId === pageId && !showTrash ? ' active' : ''}${isSelected ? ' selected' : ''}${draggingPageId === pageId ? ' dragging' : ''}`}
             style={{ paddingInlineStart: `${depth * 16 + 8}px` }}
-            onClick={() => {
-              setShowTrash(false)
-              setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: pageId }))
-            }}
+            onClick={(event) => handlePageClick(event, pageId, false)}
             onContextMenu={(event) => {
               openPageContextMenu(event, pageId)
             }}
+            draggable
+            onDragStart={(event: ReactDragEvent<HTMLDivElement>) => {
+              event.dataTransfer.effectAllowed = 'move'
+              setDraggingPageId(pageId)
+            }}
+            onDragOver={(event: ReactDragEvent<HTMLDivElement>) => {
+              if (draggingPageId && draggingPageId !== pageId) {
+                event.preventDefault()
+              }
+            }}
+            onDrop={(event: ReactDragEvent<HTMLDivElement>) => {
+              event.preventDefault()
+              if (draggingPageId) {
+                reorderPageWithinSiblings(draggingPageId, pageId)
+              }
+              setDraggingPageId(null)
+            }}
+            onDragEnd={() => setDraggingPageId(null)}
             role="button"
             tabIndex={0}
             onKeyDown={(event: ReactKeyboardEvent<HTMLDivElement>) => {
               if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault()
+                if (event.metaKey || event.ctrlKey) {
+                  togglePageSelection(pageId)
+                } else {
+                  selectSinglePage(pageId)
+                }
                 setShowTrash(false)
                 setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: pageId }))
               }
             }}
           >
-            <span>{page.isPinned ? '📌 ' : ''}{page.title}</span>
+            {hasChildren ? (
+              <button
+                type="button"
+                className="tree-toggle"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  togglePageCollapsed(pageId)
+                }}
+                aria-label={isCollapsed ? '子ページを展開' : '子ページを折りたたむ'}
+                title={isCollapsed ? '子ページを展開' : '子ページを折りたたむ'}
+              >
+                {isCollapsed ? '▸' : '▾'}
+              </button>
+            ) : (
+              <span className="tree-toggle-placeholder" aria-hidden="true" />
+            )}
+            <input
+              type="checkbox"
+              checked={isSelected}
+              aria-label={`${page.title}を選択`}
+              onClick={(event) => event.stopPropagation()}
+              onChange={() => togglePageSelection(pageId)}
+            />
+            <span className="page-title">{page.isPinned ? '📌 ' : ''}{page.title}</span>
             <button
               type="button"
               className="inline-add"
@@ -1678,7 +1892,7 @@ function App() {
               +
             </button>
           </div>
-          {visibleChildren.length > 0 ? <ul>{renderPageTree(visibleChildren, depth + 1)}</ul> : null}
+          {hasChildren && !isCollapsed ? <ul>{renderPageTree(visibleChildren, depth + 1)}</ul> : null}
         </li>
       )
     })
@@ -1765,10 +1979,7 @@ function App() {
                     <button
                       type="button"
                       className={`list-item${workspace.selectedPageId === page.id && !showTrash ? ' active' : ''}`}
-                      onClick={() => {
-                        setShowTrash(false)
-                        setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
-                      }}
+                      onClick={(event) => handlePageClick(event, page.id, false)}
                        onContextMenu={(event) => openPageContextMenu(event, page.id)}
                     >
                       {page.isPinned ? '📌 ' : ''}
@@ -1789,10 +2000,7 @@ function App() {
                     <button
                       type="button"
                       className={`list-item${workspace.selectedPageId === page.id && !showTrash ? ' active' : ''}`}
-                      onClick={() => {
-                        setShowTrash(false)
-                        setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
-                      }}
+                      onClick={(event) => handlePageClick(event, page.id, false)}
                        onContextMenu={(event) => openPageContextMenu(event, page.id)}
                     >
                       📌 {page.title}
@@ -1810,17 +2018,30 @@ function App() {
                 {trashedPages.length === 0 ? <li className="muted">ごみ箱は空です</li> : null}
                 {trashedPages.map((page) => (
                   <li key={`trash-${page.id}`}>
-                    <button
-                      type="button"
-                      className={`list-item${workspace.selectedPageId === page.id && showTrash ? ' active' : ''}`}
-                      onClick={() => {
-                        setShowTrash(true)
-                        setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
+                    <div
+                      className={`page-item${workspace.selectedPageId === page.id && showTrash ? ' active' : ''}${selectedPageIdSet.has(page.id) ? ' selected' : ''}`}
+                      onClick={(event) => handlePageClick(event, page.id, true)}
+                      onContextMenu={(event) => openPageContextMenu(event, page.id)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(event: ReactKeyboardEvent<HTMLDivElement>) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          selectSinglePage(page.id)
+                          setShowTrash(true)
+                          setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
+                        }
                       }}
-                        onContextMenu={(event) => openPageContextMenu(event, page.id)}
                     >
-                      🗑️ {page.title}
-                    </button>
+                      <input
+                        type="checkbox"
+                        checked={selectedPageIdSet.has(page.id)}
+                        aria-label={`${page.title}を選択`}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={() => togglePageSelection(page.id)}
+                      />
+                      <span className="page-title">🗑️ {page.title}</span>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -1831,6 +2052,35 @@ function App() {
               <ul className="page-tree">{renderPageTree(nonTrashedRootPageIds)}</ul>
             </section>
               )}
+
+              <section className="sidebar-section selection-tools">
+                <h2>選択中 ({selectedVisiblePageIds.length})</h2>
+                <div className="selection-actions">
+                  {!showTrash ? (
+                    <button type="button" disabled={selectedVisiblePageIds.length === 0} onClick={bulkMoveSelectedToTrash}>
+                      選択中を一括でごみ箱へ移動
+                    </button>
+                  ) : (
+                    <>
+                      <button type="button" disabled={selectedVisiblePageIds.length === 0} onClick={bulkRestoreSelected}>
+                        選択中を一括で復元
+                      </button>
+                      <button type="button" className="danger" disabled={selectedVisiblePageIds.length === 0} onClick={bulkPermanentlyDeleteSelected}>
+                        選択中を一括で完全削除
+                      </button>
+                    </>
+                  )}
+                  <button type="button" disabled={selectedPageIds.length === 0} onClick={() => setSelectedPageIds([])}>
+                    選択解除
+                  </button>
+                  <button type="button" onClick={collapseAllTreeNodes}>
+                    すべて折りたたむ
+                  </button>
+                  <button type="button" onClick={expandAllTreeNodes}>
+                    すべて展開
+                  </button>
+                </div>
+              </section>
 
 
               <div className="sidebar-actions">
@@ -2019,15 +2269,31 @@ function App() {
             {pageMenuTarget && pageContextPage ? (
               pageContextPage.isTrashed ? (
                 <>
+                  <button type="button" onClick={() => togglePageSelection(pageMenuTarget.pageId)}>
+                    {selectedPageIdSet.has(pageMenuTarget.pageId) ? '選択解除' : '選択に追加'}
+                  </button>
                   <button type="button" onClick={() => restorePage(pageMenuTarget.pageId)}>
                     復元
                   </button>
+                  {selectedVisiblePageIds.length > 1 ? (
+                    <button type="button" onClick={bulkRestoreSelected}>
+                      選択中をまとめて復元 ({selectedVisiblePageIds.length})
+                    </button>
+                  ) : null}
                   <button type="button" className="danger" onClick={() => permanentlyDeletePage(pageMenuTarget.pageId)}>
                     完全削除
                   </button>
+                  {selectedVisiblePageIds.length > 1 ? (
+                    <button type="button" className="danger" onClick={bulkPermanentlyDeleteSelected}>
+                      選択中をまとめて完全削除 ({selectedVisiblePageIds.length})
+                    </button>
+                  ) : null}
                 </>
               ) : (
                 <>
+                  <button type="button" onClick={() => togglePageSelection(pageMenuTarget.pageId)}>
+                    {selectedPageIdSet.has(pageMenuTarget.pageId) ? '選択解除' : '選択に追加'}
+                  </button>
                   <button type="button" onClick={() => addPage(pageMenuTarget.pageId)}>
                     子ページを作成
                   </button>
@@ -2040,9 +2306,19 @@ function App() {
                   <button type="button" onClick={() => movePageToRoot(pageMenuTarget.pageId)}>
                     ルートへ移動
                   </button>
+                  {pageContextPage.childrenIds.length > 0 ? (
+                    <button type="button" onClick={() => togglePageCollapsed(pageMenuTarget.pageId)}>
+                      {collapsedPageIds.includes(pageMenuTarget.pageId) ? '子ページを展開' : '子ページを折りたたむ'}
+                    </button>
+                  ) : null}
                   <button type="button" className="danger" onClick={() => movePageToTrash(pageMenuTarget.pageId)}>
                     ごみ箱へ移動
                   </button>
+                  {selectedVisiblePageIds.length > 1 ? (
+                    <button type="button" className="danger" onClick={bulkMoveSelectedToTrash}>
+                      選択中をまとめてごみ箱へ移動 ({selectedVisiblePageIds.length})
+                    </button>
+                  ) : null}
                 </>
               )
             ) : null}
@@ -2057,6 +2333,12 @@ function App() {
                 </button>
                 <button type="button" onClick={() => openCommandPalette('/')}>
                   コマンドを開く
+                </button>
+                <button type="button" onClick={collapseAllTreeNodes}>
+                  ツリーをすべて折りたたむ
+                </button>
+                <button type="button" onClick={expandAllTreeNodes}>
+                  ツリーをすべて展開
                 </button>
                 <button type="button" onClick={openHelpWindow}>
                   ヘルプを開く
