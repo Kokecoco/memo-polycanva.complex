@@ -568,6 +568,7 @@ function App() {
   const [isHelpOpen, setIsHelpOpen] = useState(false)
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
   const [isSyncGuideOpen, setIsSyncGuideOpen] = useState(false)
+  const [isSidebarToolsOpen, setIsSidebarToolsOpen] = useState(false)
   const [syncGuideCopyMessage, setSyncGuideCopyMessage] = useState<string | null>(null)
   const [commandQuery, setCommandQuery] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
@@ -1278,17 +1279,20 @@ function App() {
       window.alert('JSONの読み込みに失敗しました。')
     }
 
+    setIsSidebarToolsOpen(false)
     event.target.value = ''
   }, [])
 
   const openHelpWindow = useCallback(() => {
     setIsHelpOpen(true)
+    setIsSidebarToolsOpen(false)
     setContextMenu(null)
   }, [])
 
   const openCommandPalette = useCallback((prefix = '') => {
     setCommandQuery(prefix)
     setIsCommandPaletteOpen(true)
+    setIsSidebarToolsOpen(false)
     setContextMenu(null)
   }, [])
 
@@ -1485,11 +1489,12 @@ function App() {
         setContextMenu(null)
         setIsHelpOpen(false)
         setIsCommandPaletteOpen(false)
+        setIsSidebarToolsOpen(false)
         closeSyncGuide()
         return
       }
 
-      if (isCommandPaletteOpen || isHelpOpen || isSyncGuideOpen) {
+      if (isCommandPaletteOpen || isHelpOpen || isSyncGuideOpen || isSidebarToolsOpen) {
         return
       }
 
@@ -1560,7 +1565,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [addPage, closeSyncGuide, isCommandPaletteOpen, isHelpOpen, isSyncGuideOpen, movePageToTrash, openCommandPalette, renamePage, selectedPage, togglePin])
+  }, [addPage, closeSyncGuide, isCommandPaletteOpen, isHelpOpen, isSidebarToolsOpen, isSyncGuideOpen, movePageToTrash, openCommandPalette, renamePage, selectedPage, togglePin])
 
   useEffect(() => {
     if (!isSidebarResizing || isSidebarCollapsed) {
@@ -1867,8 +1872,11 @@ function App() {
                 }}
                 aria-label={isCollapsed ? '子ページを展開' : '子ページを折りたたむ'}
                 title={isCollapsed ? '子ページを展開' : '子ページを折りたたむ'}
+                aria-expanded={!isCollapsed}
               >
-                {isCollapsed ? '▸' : '▾'}
+                <span className={`tree-toggle-chevron${isCollapsed ? ' is-collapsed' : ''}`} aria-hidden="true">
+                  ▾
+                </span>
               </button>
             ) : (
               <span className="tree-toggle-placeholder" aria-hidden="true" />
@@ -2055,29 +2063,9 @@ function App() {
             <section className="sidebar-section">
               <h2>ページ</h2>
               <ul className="page-tree">{renderPageTree(nonTrashedRootPageIds)}</ul>
-            </section>
-              )}
-
-              <section className="sidebar-section selection-tools">
-                <h2>選択中 ({selectedVisiblePageIds.length})</h2>
-                <div className="selection-actions">
-                  {!showTrash ? (
-                    <button type="button" disabled={selectedVisiblePageIds.length === 0} onClick={bulkMoveSelectedToTrash}>
-                      選択中を一括でごみ箱へ移動
-                    </button>
-                  ) : (
-                    <>
-                      <button type="button" disabled={selectedVisiblePageIds.length === 0} onClick={bulkRestoreSelected}>
-                        選択中を一括で復元
-                      </button>
-                      <button type="button" className="danger" disabled={selectedVisiblePageIds.length === 0} onClick={bulkPermanentlyDeleteSelected}>
-                        選択中を一括で完全削除
-                      </button>
-                    </>
-                  )}
-                  <button type="button" disabled={selectedPageIds.length === 0} onClick={() => setSelectedPageIds([])}>
-                    選択解除
-                  </button>
+              <details className="sidebar-accordion">
+                <summary>ツリー操作</summary>
+                <div className="accordion-panel">
                   <button type="button" onClick={collapseAllTreeNodes}>
                     すべて折りたたむ
                   </button>
@@ -2085,30 +2073,50 @@ function App() {
                     すべて展開
                   </button>
                 </div>
+              </details>
+            </section>
+              )}
+
+              <section className="sidebar-section selection-tools">
+                <details className="sidebar-accordion">
+                  <summary aria-live="polite" aria-atomic="true">選択中 ({selectedVisiblePageIds.length})</summary>
+                  <div className="accordion-panel selection-actions">
+                    {!showTrash ? (
+                      <button type="button" disabled={selectedVisiblePageIds.length === 0} onClick={bulkMoveSelectedToTrash}>
+                        選択中を一括でごみ箱へ移動
+                      </button>
+                    ) : (
+                      <>
+                        <button type="button" disabled={selectedVisiblePageIds.length === 0} onClick={bulkRestoreSelected}>
+                          選択中を一括で復元
+                        </button>
+                        <button type="button" className="danger" disabled={selectedVisiblePageIds.length === 0} onClick={bulkPermanentlyDeleteSelected}>
+                          選択中を一括で完全削除
+                        </button>
+                      </>
+                    )}
+                    <button type="button" disabled={selectedPageIds.length === 0} onClick={() => setSelectedPageIds([])}>
+                      選択解除
+                    </button>
+                  </div>
+                </details>
               </section>
 
 
               <div className="sidebar-actions">
-                <button type="button" onClick={() => downloadJson(workspace)}>
-                  JSONエクスポート
-                </button>
-                <button type="button" onClick={() => importInputRef.current?.click()}>
-                  JSONインポート
-                </button>
-                <button type="button" onClick={() => openCommandPalette('/')}>
-                  コマンド
-                </button>
-                <button type="button" onClick={openHelpWindow}>
-                  ヘルプ
-                </button>
-                <button type="button" onClick={() => setIsSyncSettingsOpen((previous) => !previous)}>
-                  {isSyncSettingsOpen ? '同期設定を閉じる' : '同期設定'}
+                <button type="button" onClick={() => setIsSidebarToolsOpen(true)}>
+                  ツールを開く
                 </button>
               </div>
 
-              {isSyncSettingsOpen ? (
             <section className="sidebar-section sync-settings">
-              <h2>Google同期設定</h2>
+              <details
+                className="sidebar-accordion"
+                open={isSyncSettingsOpen}
+                onToggle={(event) => setIsSyncSettingsOpen((event.currentTarget as HTMLDetailsElement).open)}
+              >
+                <summary>Google同期設定</summary>
+                <div className="accordion-panel">
               <label>
                 GAS WebアプリURL
                 <input
@@ -2170,11 +2178,14 @@ function App() {
                   注意: Google同期機能は任意の機能です。設定・公開範囲・権限の管理は利用者の自己責任で行ってください。
                 </p>
               </div>
+                </div>
+              </details>
             </section>
-              ) : null}
 
               <section className="sidebar-section sync-status-panel">
-            <h2>同期ステータス</h2>
+                <details className="sidebar-accordion" open>
+                  <summary>同期ステータス</summary>
+                  <div className="accordion-panel">
             <p className="muted">{isSyncing ? '同期処理中...' : syncStatus}</p>
             <p className="muted">最終同期: {lastSyncLabel}</p>
             {syncError ? <p className="muted sync-error">エラー: {syncError}</p> : null}
@@ -2194,6 +2205,8 @@ function App() {
                 </button>
               ) : null}
             </div>
+                  </div>
+                </details>
               </section>
 
             </>
@@ -2202,23 +2215,11 @@ function App() {
               <button type="button" className="sidebar-icon-button" onClick={() => addPage(null)} aria-label="ルートページ追加" title="ルートページ追加">
                 ➕
               </button>
-              <button type="button" className="sidebar-icon-button" onClick={() => openCommandPalette('/')} aria-label="コマンド" title="コマンド">
-                ⌘
-              </button>
               <button type="button" className="sidebar-icon-button" onClick={() => setShowTrash((previous) => !previous)} aria-label={showTrash ? '通常表示へ切替' : 'ごみ箱を表示'} title={showTrash ? '通常表示へ切替' : 'ごみ箱を表示'}>
                 {showTrash ? '📄' : '🗑️'}
               </button>
-              <button type="button" className="sidebar-icon-button" onClick={() => setIsSyncSettingsOpen((previous) => !previous)} aria-label={isSyncSettingsOpen ? '同期設定を閉じる' : '同期設定'} title={isSyncSettingsOpen ? '同期設定を閉じる' : '同期設定'}>
-                ☁️
-              </button>
-              <button type="button" className="sidebar-icon-button" onClick={() => downloadJson(workspace)} aria-label="JSONエクスポート" title="JSONエクスポート">
-                📤
-              </button>
-              <button type="button" className="sidebar-icon-button" onClick={() => importInputRef.current?.click()} aria-label="JSONインポート" title="JSONインポート">
-                📥
-              </button>
-              <button type="button" className="sidebar-icon-button" onClick={openHelpWindow} aria-label="ヘルプ" title="ヘルプ">
-                ❔
+              <button type="button" className="sidebar-icon-button" onClick={() => setIsSidebarToolsOpen(true)} aria-label="ツールを開く" title="ツールを開く">
+                ⋯
               </button>
             </div>
           )}
@@ -2503,6 +2504,52 @@ function App() {
                 {syncGuideCopyMessage ? <p className="muted" aria-live="polite">{syncGuideCopyMessage}</p> : null}
               </div>
               <pre className="sync-template-code">{googleSyncTemplate}</pre>
+            </div>
+          </div>
+        ) : null}
+
+        {isSidebarToolsOpen ? (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onClick={() => setIsSidebarToolsOpen(false)}
+          >
+            <div
+              className="modal-panel sidebar-tools-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="sidebar-tools-dialog-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h3 id="sidebar-tools-dialog-title">サイドバーツール</h3>
+              <div className="sync-actions">
+                <button type="button" onClick={() => downloadJson(workspace)}>
+                  JSONエクスポート
+                </button>
+                <button type="button" onClick={() => {
+                  importInputRef.current?.click()
+                }}>
+                  JSONインポート
+                </button>
+                <button type="button" onClick={() => openCommandPalette('/')}>
+                  コマンドを開く
+                </button>
+                <button type="button" onClick={openHelpWindow}>
+                  ヘルプを開く
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSyncSettingsOpen(true)
+                    setIsSidebarToolsOpen(false)
+                  }}
+                >
+                  同期設定を開く
+                </button>
+                <button type="button" onClick={() => setIsSidebarToolsOpen(false)}>
+                  閉じる
+                </button>
+              </div>
             </div>
           </div>
         ) : null}
