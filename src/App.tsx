@@ -1279,6 +1279,7 @@ function App() {
       window.alert('JSONの読み込みに失敗しました。')
     }
 
+    setIsSidebarToolsOpen(false)
     event.target.value = ''
   }, [])
 
@@ -2527,7 +2528,6 @@ function App() {
                 </button>
                 <button type="button" onClick={() => {
                   importInputRef.current?.click()
-                  setIsSidebarToolsOpen(false)
                 }}>
                   JSONインポート
                 </button>

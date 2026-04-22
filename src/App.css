@@ -229,13 +229,13 @@
   cursor: pointer;
 }
 
-.sidebar button:not(.tree-toggle):not(.inline-add):hover,
+.sidebar button:hover,
 .context-menu button:hover {
   background: #f5f8ff;
   border-color: #b8c3d8;
 }
 
-.sidebar button:not(.tree-toggle):not(.inline-add):focus-visible,
+.sidebar button:focus-visible,
 .search-box input:focus-visible {
   outline: none;
   border-color: #93c5fd;
