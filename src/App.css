@@ -6,6 +6,7 @@
   --sidebar-space: 10px;
   --sidebar-radius: 10px;
   --sidebar-active-border: #9fb7f5;
+  --sidebar-divider: #e5e9f0;
 }
 
 .app-layout {
@@ -390,7 +391,7 @@
 }
 
 .sidebar-accordion {
-  border: 1px solid #e5e9f0;
+  border: 1px solid var(--sidebar-divider);
   border-radius: 8px;
   background: #fbfcff;
 }
@@ -424,7 +425,7 @@
 }
 
 .sidebar-accordion[open] > summary {
-  border-bottom: 1px solid #e5e9f0;
+  border-bottom: 1px solid var(--sidebar-divider);
 }
 
 .accordion-panel {

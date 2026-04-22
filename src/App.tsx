@@ -2079,7 +2079,7 @@ function App() {
 
               <section className="sidebar-section selection-tools">
                 <details className="sidebar-accordion">
-                  <summary>選択中 ({selectedVisiblePageIds.length})</summary>
+                  <summary aria-live="polite" aria-atomic="true">選択中 ({selectedVisiblePageIds.length})</summary>
                   <div className="accordion-panel selection-actions">
                     {!showTrash ? (
                       <button type="button" disabled={selectedVisiblePageIds.length === 0} onClick={bulkMoveSelectedToTrash}>
