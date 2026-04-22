@@ -227,7 +227,7 @@
   border-radius: 8px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 4px 8px;
   cursor: pointer;
   user-select: none;
@@ -242,12 +242,63 @@
   background: #e2ebff;
 }
 
+.page-item.selected {
+  outline: 1px solid #93c5fd;
+}
+
+.page-item.dragging {
+  opacity: 0.65;
+}
+
+.page-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-toggle,
+.tree-toggle-placeholder {
+  width: 18px;
+  text-align: center;
+  font-size: 0.82rem;
+}
+
+.tree-toggle {
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.tree-toggle:hover {
+  background: #e5e7eb;
+}
+
+.tree-toggle-placeholder {
+  color: #9ca3af;
+}
+
 .inline-add {
   border: none;
   background: transparent;
   font-size: 1rem;
   line-height: 1;
   padding: 0 4px;
+}
+
+.selection-tools {
+  border: 1px solid #e5e9f0;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.selection-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .editor-area {
