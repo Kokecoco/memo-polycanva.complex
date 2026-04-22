@@ -2,6 +2,12 @@
   box-sizing: border-box;
 }
 
+:root {
+  --sidebar-space: 10px;
+  --sidebar-radius: 10px;
+  --sidebar-active-border: #9fb7f5;
+}
+
 .app-layout {
   display: grid;
   min-height: 100vh;
@@ -15,11 +21,11 @@
 
 .sidebar {
   border-right: 1px solid #dde1e8;
-  background: #fff;
+  background: #fdfdff;
   display: flex;
   flex-direction: column;
-  padding: 12px;
-  gap: 12px;
+  padding: var(--sidebar-space);
+  gap: var(--sidebar-space);
   max-height: 100vh;
   overflow: auto;
   position: relative;
@@ -33,6 +39,11 @@
 .sidebar-collapse-toggle {
   display: flex;
   justify-content: flex-end;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: inherit;
+  padding-bottom: 4px;
 }
 
 .sidebar.collapsed .sidebar-collapse-toggle {
@@ -42,6 +53,7 @@
 .sidebar-toggle-button {
   width: 36px;
   text-align: center;
+  font-weight: 700;
 }
 
 .sidebar-icon-actions {
@@ -59,6 +71,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border-radius: var(--sidebar-radius);
 }
 
 .sidebar-resize-handle {
@@ -89,7 +102,9 @@
 
 .sidebar-header h1 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #111827;
 }
 
 .sidebar-actions {
@@ -108,13 +123,14 @@
   padding: 6px 10px;
   font-size: 0.85rem;
   text-align: left;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .sidebar-section.sync-settings {
   border: 1px solid #e5e9f0;
-  border-radius: 10px;
-  padding: 10px;
-  gap: 10px;
+  border-radius: var(--sidebar-radius);
+  padding: var(--sidebar-space);
+  gap: var(--sidebar-space);
 }
 
 .sync-settings label {
@@ -146,8 +162,8 @@
 
 .sync-status-panel {
   border: 1px solid #e5e9f0;
-  border-radius: 10px;
-  padding: 10px;
+  border-radius: var(--sidebar-radius);
+  padding: var(--sidebar-space);
 }
 
 .sync-actions {
@@ -167,7 +183,15 @@
 
 .sidebar button:hover,
 .context-menu button:hover {
-  background: #f3f5f9;
+  background: #f5f8ff;
+  border-color: #b8c3d8;
+}
+
+.sidebar button:focus-visible,
+.search-box input:focus-visible {
+  outline: none;
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.35);
 }
 
 .search-box input {
@@ -186,18 +210,24 @@
 
 .view-toggle .active {
   background: #e2ebff;
+  border-color: var(--sidebar-active-border);
+  font-weight: 600;
 }
 
 .sidebar-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  border: 1px solid #e7ebf3;
+  border-radius: var(--sidebar-radius);
+  padding: var(--sidebar-space);
+  background: #ffffff;
 }
 
 .sidebar-section h2 {
   margin: 0;
-  font-size: 0.8rem;
-  color: #6b7280;
+  font-size: 0.78rem;
+  color: #4b5563;
 }
 
 .flat-list,
@@ -220,6 +250,8 @@
 
 .list-item.active {
   background: #e2ebff;
+  border-color: var(--sidebar-active-border);
+  font-weight: 600;
 }
 
 .page-item {
@@ -240,6 +272,7 @@
 
 .page-item.active {
   background: #e2ebff;
+  border: 1px solid var(--sidebar-active-border);
 }
 
 .page-item.selected {
@@ -291,8 +324,8 @@
 
 .selection-tools {
   border: 1px solid #e5e9f0;
-  border-radius: 10px;
-  padding: 10px;
+  border-radius: var(--sidebar-radius);
+  padding: var(--sidebar-space);
 }
 
 .selection-actions {
