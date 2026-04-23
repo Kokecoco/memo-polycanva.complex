@@ -665,6 +665,7 @@ function Editor({
       slashMenu
       sideMenu
       formattingToolbar
+      className="editor-custom-style"
     />
   );
 }
