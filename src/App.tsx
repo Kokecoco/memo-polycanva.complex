@@ -137,6 +137,10 @@ const codeBlockSchema = BlockNoteSchema.create({
   },
 })
 
+await highlighter.loadLanguage("go");
+await highlighter.loadLanguage("rust");
+await highlighter.loadLanguage("java");
+
 function createDefaultSyncSettings(): SyncSettings {
   const randomSuffix = (() => {
     const values = new Uint32Array(4)
