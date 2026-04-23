@@ -122,7 +122,7 @@ const codeBlockSupportedLanguages: Record<string, { name: string; aliases?: stri
 }
 
 const codeBlockHighlighterPromise = createHighlighter({
-  themes: ['github-light', 'github-dark'],
+  themes: ['vitesse-light', 'vitesse-dark'],
   langs: Object.keys(codeBlockSupportedLanguages).filter((language) => language !== 'text'),
 })
 
