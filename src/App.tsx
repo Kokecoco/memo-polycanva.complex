@@ -122,7 +122,7 @@ const codeBlockSupportedLanguages: Record<string, { name: string; aliases?: stri
 }
 
 const codeBlockHighlighterPromise = createHighlighter({
-  themes: ['vitesse-light', 'vitesse-dark'],
+  themes: ['catppuccin-latte', 'catppuccin-mocha'],
   langs: Object.keys(codeBlockSupportedLanguages).filter((language) => language !== 'text'),
 })
 
