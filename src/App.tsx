@@ -10,6 +10,7 @@ import {
   BlockNoteSchema,
   createCodeBlockSpec,
   defaultBlockSpecs,
+  locales,
 } from "@blocknote/core";
 import type { PartialBlock } from "@blocknote/core";
 import { BlockNoteView } from "@blocknote/mantine";
@@ -654,6 +655,7 @@ function Editor({
   const editor = useCreateBlockNote({
     schema: codeBlockSchema,
     initialContent,
+    dictionary: locales.ja,
   });
 
   return (
