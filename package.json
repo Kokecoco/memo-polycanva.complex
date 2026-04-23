@@ -16,6 +16,8 @@
     "@emotion/react": "^11.14.0",
     "@mantine/core": "^8.3.18",
     "@mantine/hooks": "^8.3.18",
+    "@shikijs/langs-precompiled": "^4.0.2",
+    "@shikijs/themes": "^4.0.2",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "shiki": "^4.0.2"
