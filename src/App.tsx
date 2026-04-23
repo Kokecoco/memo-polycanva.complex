@@ -5,8 +5,7 @@ import type { PartialBlock } from '@blocknote/core'
 import { BlockNoteView } from '@blocknote/mantine'
 import { useCreateBlockNote } from '@blocknote/react'
 import { MantineProvider } from '@mantine/core'
-// @ts-ignore
-import { createHighlighter } from "https://esm.sh/shiki@3.0.0/bundle/web";
+import { createHighlighter } from 'shiki/bundle/web'
 import '@mantine/core/styles.css'
 import '@blocknote/core/fonts/inter.css'
 import '@blocknote/mantine/style.css'
@@ -136,10 +135,6 @@ const codeBlockSchema = BlockNoteSchema.create({
     }),
   },
 })
-
-await highlighter.loadLanguage("go");
-await highlighter.loadLanguage("rust");
-await highlighter.loadLanguage("java");
 
 function createDefaultSyncSettings(): SyncSettings {
   const randomSuffix = (() => {
