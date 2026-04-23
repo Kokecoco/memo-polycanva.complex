@@ -1,130 +1,149 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
-import { BlockNoteSchema, createCodeBlockSpec, defaultBlockSpecs } from '@blocknote/core'
-import type { PartialBlock } from '@blocknote/core'
-import { BlockNoteView } from '@blocknote/mantine'
-import { useCreateBlockNote } from '@blocknote/react'
-import { MantineProvider } from '@mantine/core'
-import { createHighlighter } from './shiki.bundle.ts'
-import '@mantine/core/styles.css'
-import '@blocknote/core/fonts/inter.css'
-import '@blocknote/mantine/style.css'
-import googleSyncTemplate from '../google-sync.gs?raw'
-import './App.css'
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  ChangeEvent,
+  DragEvent as ReactDragEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  ReactNode,
+} from "react";
+import {
+  BlockNoteSchema,
+  createCodeBlockSpec,
+  defaultBlockSpecs,
+} from "@blocknote/core";
+import type { PartialBlock } from "@blocknote/core";
+import { BlockNoteView } from "@blocknote/mantine";
+import { useCreateBlockNote } from "@blocknote/react";
+import { MantineProvider } from "@mantine/core";
+import { createHighlighter } from "./shiki.bundle.ts";
+import "@mantine/core/styles.css";
+import "@blocknote/core/fonts/inter.css";
+import "@blocknote/mantine/style.css";
+import googleSyncTemplate from "../google-sync.gs?raw";
+import "./App.css";
 
-type PageId = string
+type PageId = string;
 
 interface MemoPage {
-  id: PageId
-  title: string
-  parentId: PageId | null
-  childrenIds: PageId[]
-  content: string
-  isPinned: boolean
-  updatedAt: number
-  isTrashed: boolean
-  trashedAt: number | null
+  id: PageId;
+  title: string;
+  parentId: PageId | null;
+  childrenIds: PageId[];
+  content: string;
+  isPinned: boolean;
+  updatedAt: number;
+  isTrashed: boolean;
+  trashedAt: number | null;
 }
 
 interface Workspace {
-  pages: Record<PageId, MemoPage>
-  rootPageIds: PageId[]
-  selectedPageId: PageId
+  pages: Record<PageId, MemoPage>;
+  rootPageIds: PageId[];
+  selectedPageId: PageId;
 }
 
 interface SyncSettings {
-  gasUrl: string
-  spreadsheetRef: string
-  syncKey: string
-  deviceId: string
+  gasUrl: string;
+  spreadsheetRef: string;
+  syncKey: string;
+  deviceId: string;
 }
 
 interface CloudRecord {
-  workspaceJson: string
-  updatedAt: number
-  deviceId: string
+  workspaceJson: string;
+  updatedAt: number;
+  deviceId: string;
 }
 
 interface SyncApiResponse {
-  ok: boolean
-  message?: string
+  ok: boolean;
+  message?: string;
   data?: {
-    workspaceJson?: string
-    updatedAt?: number
-    deviceId?: string
-  } | null
+    workspaceJson?: string;
+    updatedAt?: number;
+    deviceId?: string;
+  } | null;
 }
 
 type ContextMenuTarget =
-  | { kind: 'page'; pageId: PageId }
-  | { kind: 'sidebar' }
-  | { kind: 'editor'; pageId: PageId | null }
+  | { kind: "page"; pageId: PageId }
+  | { kind: "sidebar" }
+  | { kind: "editor"; pageId: PageId | null };
 
 interface ContextMenuState {
-  target: ContextMenuTarget
-  x: number
-  y: number
+  target: ContextMenuTarget;
+  x: number;
+  y: number;
 }
 
 interface CommandAction {
-  id: string
-  label: string
-  description: string
-  shortcut?: string
-  tags: string[]
-  prefixes?: Array<'/' | '@'>
-  disabled?: boolean
+  id: string;
+  label: string;
+  description: string;
+  shortcut?: string;
+  tags: string[];
+  prefixes?: Array<"/" | "@">;
+  disabled?: boolean;
 }
 
-const DB_NAME = 'memo-polycanva'
-const DB_VERSION = 1
-const STORE_NAME = 'workspace'
-const STORE_KEY = 'default'
-const SYNC_SETTINGS_STORAGE_KEY = 'memo-polycanva.sync-settings'
-const MAX_SEARCH_RESULTS = 20
-const SYNC_DEBOUNCE_MS = 1800
-const MAX_SYNC_JSON_BYTES = 900000
-const SYNC_CONFLICT_PROMPT_MESSAGE = '同じ更新時刻の競合を検知しました。\nOK: クラウドを採用\nキャンセル: ローカルを採用して上書き保存'
-const SIDEBAR_WIDTH_STORAGE_KEY = 'memo-polycanva.sidebar-width'
-const DEFAULT_SIDEBAR_WIDTH = 320
-const MIN_SIDEBAR_WIDTH = 240
-const MAX_SIDEBAR_WIDTH = 520
-let fallbackIdCounter = 0
+const DB_NAME = "memo-polycanva";
+const DB_VERSION = 1;
+const STORE_NAME = "workspace";
+const STORE_KEY = "default";
+const SYNC_SETTINGS_STORAGE_KEY = "memo-polycanva.sync-settings";
+const MAX_SEARCH_RESULTS = 20;
+const SYNC_DEBOUNCE_MS = 1800;
+const MAX_SYNC_JSON_BYTES = 900000;
+const SYNC_CONFLICT_PROMPT_MESSAGE =
+  "同じ更新時刻の競合を検知しました。\nOK: クラウドを採用\nキャンセル: ローカルを採用して上書き保存";
+const SIDEBAR_WIDTH_STORAGE_KEY = "memo-polycanva.sidebar-width";
+const DEFAULT_SIDEBAR_WIDTH = 320;
+const MIN_SIDEBAR_WIDTH = 240;
+const MAX_SIDEBAR_WIDTH = 520;
+let fallbackIdCounter = 0;
 
 function clampSidebarWidth(value: number): number {
-  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, Math.round(value)))
+  return Math.min(
+    MAX_SIDEBAR_WIDTH,
+    Math.max(MIN_SIDEBAR_WIDTH, Math.round(value)),
+  );
 }
 
 const defaultContent: PartialBlock[] = [
   {
-    type: 'paragraph',
-    content: '',
+    type: "paragraph",
+    content: "",
   },
-]
+];
 
-const codeBlockSupportedLanguages: Record<string, { name: string; aliases?: string[] }> = {
-  text: { name: 'Plain Text', aliases: ['plaintext', 'txt'] },
-  javascript: { name: 'JavaScript', aliases: ['js'] },
-  typescript: { name: 'TypeScript', aliases: ['ts'] },
-  jsx: { name: 'JSX' },
-  tsx: { name: 'TSX' },
-  json: { name: 'JSON' },
-  html: { name: 'HTML' },
-  css: { name: 'CSS' },
-  bash: { name: 'Bash', aliases: ['sh', 'shell', 'zsh'] },
-  markdown: { name: 'Markdown', aliases: ['md'] },
-  yaml: { name: 'YAML', aliases: ['yml'] },
-  sql: { name: 'SQL' },
-  python: { name: 'Python', aliases: ['py'] },
-  go: { name: 'Go' },
-  rust: { name: 'Rust', aliases: ['rs'] },
-  java: { name: 'Java' },
-}
+const codeBlockSupportedLanguages: Record<
+  string,
+  { name: string; aliases?: string[] }
+> = {
+  text: { name: "Plain Text", aliases: ["plaintext", "txt"] },
+  javascript: { name: "JavaScript", aliases: ["js"] },
+  typescript: { name: "TypeScript", aliases: ["ts"] },
+  jsx: { name: "JSX" },
+  tsx: { name: "TSX" },
+  json: { name: "JSON" },
+  html: { name: "HTML" },
+  css: { name: "CSS" },
+  bash: { name: "Bash", aliases: ["sh", "shell", "zsh"] },
+  markdown: { name: "Markdown", aliases: ["md"] },
+  yaml: { name: "YAML", aliases: ["yml"] },
+  sql: { name: "SQL" },
+  python: { name: "Python", aliases: ["py"] },
+  go: { name: "Go" },
+  rust: { name: "Rust", aliases: ["rs"] },
+  java: { name: "Java" },
+};
 
 const codeBlockHighlighterPromise = createHighlighter({
-  themes: ['catppuccin-latte', 'one-dark-pro'],
-  langs: Object.keys(codeBlockSupportedLanguages).filter((language) => language !== 'text'),
-})
+  themes: ["one-dark-pro"],
+  langs: Object.keys(codeBlockSupportedLanguages).filter(
+    (language) => language !== "text",
+  ),
+});
 
 const codeBlockSchema = BlockNoteSchema.create({
   blockSpecs: {
@@ -134,146 +153,164 @@ const codeBlockSchema = BlockNoteSchema.create({
       createHighlighter: () => codeBlockHighlighterPromise,
     }),
   },
-})
+});
 
 function createDefaultSyncSettings(): SyncSettings {
   const randomSuffix = (() => {
-    const values = new Uint32Array(4)
+    const values = new Uint32Array(4);
     if (globalThis.crypto?.getRandomValues) {
-      globalThis.crypto.getRandomValues(values)
-      return Array.from(values).map((value) => value.toString(36)).join('-')
+      globalThis.crypto.getRandomValues(values);
+      return Array.from(values)
+        .map((value) => value.toString(36))
+        .join("-");
     }
-    return `${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
-  })()
-  const fallbackDeviceId = `device-${Date.now()}-${randomSuffix}`
+    return `${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  })();
+  const fallbackDeviceId = `device-${Date.now()}-${randomSuffix}`;
   return {
-    gasUrl: '',
-    spreadsheetRef: '',
-    syncKey: '',
+    gasUrl: "",
+    spreadsheetRef: "",
+    syncKey: "",
     deviceId: globalThis.crypto?.randomUUID?.() ?? fallbackDeviceId,
-  }
+  };
 }
 
 function normalizeSyncSettings(value: unknown): SyncSettings {
-  const defaults = createDefaultSyncSettings()
-  if (!value || typeof value !== 'object') {
-    return defaults
+  const defaults = createDefaultSyncSettings();
+  if (!value || typeof value !== "object") {
+    return defaults;
   }
 
-  const candidate = value as Partial<SyncSettings>
+  const candidate = value as Partial<SyncSettings>;
   return {
-    gasUrl: typeof candidate.gasUrl === 'string' ? candidate.gasUrl.trim() : '',
-    spreadsheetRef: typeof candidate.spreadsheetRef === 'string' ? candidate.spreadsheetRef.trim() : '',
-    syncKey: typeof candidate.syncKey === 'string' ? candidate.syncKey.trim() : '',
-    deviceId: typeof candidate.deviceId === 'string' && candidate.deviceId.trim() ? candidate.deviceId.trim() : defaults.deviceId,
-  }
+    gasUrl: typeof candidate.gasUrl === "string" ? candidate.gasUrl.trim() : "",
+    spreadsheetRef:
+      typeof candidate.spreadsheetRef === "string"
+        ? candidate.spreadsheetRef.trim()
+        : "",
+    syncKey:
+      typeof candidate.syncKey === "string" ? candidate.syncKey.trim() : "",
+    deviceId:
+      typeof candidate.deviceId === "string" && candidate.deviceId.trim()
+        ? candidate.deviceId.trim()
+        : defaults.deviceId,
+  };
 }
 
 function extractSpreadsheetId(input: string): string {
-  const value = input.trim()
+  const value = input.trim();
   if (!value) {
-    return ''
+    return "";
   }
 
-  const match = value.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/)
+  const match = value.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (match?.[1]) {
-    return match[1]
+    return match[1];
   }
 
   if (/^[a-zA-Z0-9-_]{20,}$/.test(value)) {
-    return value
+    return value;
   }
 
-  return ''
+  return "";
 }
 
 function isSyncConfigured(settings: SyncSettings): boolean {
-  let gasUrlValid = false
+  let gasUrlValid = false;
   try {
-    const url = new URL(settings.gasUrl.trim())
-    gasUrlValid = url.protocol === 'https:'
+    const url = new URL(settings.gasUrl.trim());
+    gasUrlValid = url.protocol === "https:";
   } catch {
     // Invalid GAS URL should be treated as not configured.
   }
 
   return Boolean(
-    gasUrlValid
-    && settings.syncKey.trim()
-    && extractSpreadsheetId(settings.spreadsheetRef),
-  )
+    gasUrlValid &&
+      settings.syncKey.trim() &&
+      extractSpreadsheetId(settings.spreadsheetRef),
+  );
 }
 
 function getWorkspaceUpdatedAt(workspace: Workspace): number {
-  const values = Object.values(workspace.pages)
+  const values = Object.values(workspace.pages);
   if (values.length === 0) {
-    return 0
+    return 0;
   }
-  return values.reduce((max, page) => Math.max(max, page.updatedAt), 0)
+  return values.reduce((max, page) => Math.max(max, page.updatedAt), 0);
 }
 
 async function parseSyncResponse(response: Response): Promise<SyncApiResponse> {
-  const raw = await response.text()
+  const raw = await response.text();
   try {
-    return JSON.parse(raw) as SyncApiResponse
+    return JSON.parse(raw) as SyncApiResponse;
   } catch {
     return {
       ok: false,
-      message: raw || 'サーバー応答がJSONではありません。',
-    }
+      message: raw || "サーバー応答がJSONではありません。",
+    };
   }
 }
 
-function normalizeCloudRecord(value: SyncApiResponse['data']): CloudRecord | null {
-  if (!value || typeof value !== 'object') {
-    return null
+function normalizeCloudRecord(
+  value: SyncApiResponse["data"],
+): CloudRecord | null {
+  if (!value || typeof value !== "object") {
+    return null;
   }
 
-  const workspaceJson = typeof value.workspaceJson === 'string' ? value.workspaceJson : ''
-  const updatedAt = typeof value.updatedAt === 'number' && Number.isFinite(value.updatedAt) ? value.updatedAt : -1
-  const deviceId = typeof value.deviceId === 'string' ? value.deviceId : ''
+  const workspaceJson =
+    typeof value.workspaceJson === "string" ? value.workspaceJson : "";
+  const updatedAt =
+    typeof value.updatedAt === "number" && Number.isFinite(value.updatedAt)
+      ? value.updatedAt
+      : -1;
+  const deviceId = typeof value.deviceId === "string" ? value.deviceId : "";
 
   if (!workspaceJson || updatedAt <= 0) {
-    return null
+    return null;
   }
 
   return {
     workspaceJson,
     updatedAt,
     deviceId,
-  }
+  };
 }
 
 function getSyncApiEndpoint(gasUrl: string): URL | null {
-  const trimmedGasUrl = gasUrl.trim()
+  const trimmedGasUrl = gasUrl.trim();
   if (!trimmedGasUrl) {
-    return null
+    return null;
   }
 
   try {
-    return new URL(trimmedGasUrl)
+    return new URL(trimmedGasUrl);
   } catch {
-    return null
+    return null;
   }
 }
 
-async function callSyncApiGet(settings: SyncSettings, action: 'get' | 'test'): Promise<SyncApiResponse> {
-  const spreadsheetId = extractSpreadsheetId(settings.spreadsheetRef)
-  const endpoint = getSyncApiEndpoint(settings.gasUrl)
+async function callSyncApiGet(
+  settings: SyncSettings,
+  action: "get" | "test",
+): Promise<SyncApiResponse> {
+  const spreadsheetId = extractSpreadsheetId(settings.spreadsheetRef);
+  const endpoint = getSyncApiEndpoint(settings.gasUrl);
   if (!endpoint) {
     return {
       ok: false,
-      message: '同期先URLが不正です。',
-    }
+      message: "同期先URLが不正です。",
+    };
   }
-  endpoint.searchParams.set('action', action)
-  endpoint.searchParams.set('syncKey', settings.syncKey.trim())
-  endpoint.searchParams.set('spreadsheetId', spreadsheetId)
-  endpoint.searchParams.set('deviceId', settings.deviceId.trim())
+  endpoint.searchParams.set("action", action);
+  endpoint.searchParams.set("syncKey", settings.syncKey.trim());
+  endpoint.searchParams.set("spreadsheetId", spreadsheetId);
+  endpoint.searchParams.set("deviceId", settings.deviceId.trim());
   const response = await fetch(endpoint.toString(), {
-    method: 'GET',
-    cache: 'no-store',
-  })
-  return parseSyncResponse(response)
+    method: "GET",
+    cache: "no-store",
+  });
+  return parseSyncResponse(response);
 }
 
 async function callSyncApiSave(
@@ -281,44 +318,47 @@ async function callSyncApiSave(
   workspaceJson: string,
   updatedAt: number,
 ): Promise<SyncApiResponse> {
-  const spreadsheetId = extractSpreadsheetId(settings.spreadsheetRef)
-  const jsonBytes = new TextEncoder().encode(workspaceJson).length
+  const spreadsheetId = extractSpreadsheetId(settings.spreadsheetRef);
+  const jsonBytes = new TextEncoder().encode(workspaceJson).length;
   if (jsonBytes > MAX_SYNC_JSON_BYTES) {
     return {
       ok: false,
       message: `同期データサイズが大きすぎます（${Math.round(jsonBytes / 1024)}KB）。`,
-    }
+    };
   }
 
-  const endpoint = getSyncApiEndpoint(settings.gasUrl)
+  const endpoint = getSyncApiEndpoint(settings.gasUrl);
   if (!endpoint) {
     return {
       ok: false,
-      message: '同期先URLが不正です。',
-    }
+      message: "同期先URLが不正です。",
+    };
   }
 
   const response = await fetch(endpoint.toString(), {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'Content-Type': 'text/plain;charset=utf-8',
+      "Content-Type": "text/plain;charset=utf-8",
     },
     body: JSON.stringify({
-      action: 'save',
+      action: "save",
       syncKey: settings.syncKey.trim(),
       spreadsheetId,
       deviceId: settings.deviceId.trim(),
       updatedAt,
       workspaceJson,
     }),
-  })
+  });
 
-  return parseSyncResponse(response)
+  return parseSyncResponse(response);
 }
 
-function createPage(parentId: PageId | null = null, title = '新しいページ'): MemoPage {
-  const fallbackId = `${Date.now()}-${Math.round((globalThis.performance?.now?.() ?? 0) * 1000)}-${fallbackIdCounter++}`
-  const now = Date.now()
+function createPage(
+  parentId: PageId | null = null,
+  title = "新しいページ",
+): MemoPage {
+  const fallbackId = `${Date.now()}-${Math.round((globalThis.performance?.now?.() ?? 0) * 1000)}-${fallbackIdCounter++}`;
+  const now = Date.now();
   return {
     id: globalThis.crypto?.randomUUID?.() ?? fallbackId,
     title,
@@ -329,730 +369,832 @@ function createPage(parentId: PageId | null = null, title = '新しいページ'
     updatedAt: now,
     isTrashed: false,
     trashedAt: null,
-  }
+  };
 }
 
 function createDefaultWorkspace(): Workspace {
-  const firstPage = createPage(null, 'ホーム')
+  const firstPage = createPage(null, "ホーム");
   return {
     pages: { [firstPage.id]: firstPage },
     rootPageIds: [firstPage.id],
     selectedPageId: firstPage.id,
-  }
+  };
 }
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION)
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    request.onerror = () => reject(request.error)
-    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
 
     request.onupgradeneeded = () => {
-      const database = request.result
+      const database = request.result;
       if (!database.objectStoreNames.contains(STORE_NAME)) {
-        database.createObjectStore(STORE_NAME)
+        database.createObjectStore(STORE_NAME);
       }
-    }
-  })
+    };
+  });
 }
 
 async function loadWorkspaceFromIndexedDB(): Promise<Workspace | null> {
-  const database = await openDatabase()
+  const database = await openDatabase();
 
   return new Promise((resolve, reject) => {
-    const tx = database.transaction(STORE_NAME, 'readonly')
-    const store = tx.objectStore(STORE_NAME)
-    const request = store.get(STORE_KEY)
+    const tx = database.transaction(STORE_NAME, "readonly");
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.get(STORE_KEY);
 
-    request.onerror = () => reject(request.error)
+    request.onerror = () => reject(request.error);
     request.onsuccess = () => {
-      resolve(normalizeWorkspace(request.result))
-    }
-  })
+      resolve(normalizeWorkspace(request.result));
+    };
+  });
 }
 
 async function saveWorkspaceToIndexedDB(workspace: Workspace): Promise<void> {
-  const database = await openDatabase()
+  const database = await openDatabase();
 
   return new Promise((resolve, reject) => {
-    const tx = database.transaction(STORE_NAME, 'readwrite')
-    const store = tx.objectStore(STORE_NAME)
+    const tx = database.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
 
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
 
-    store.put(workspace, STORE_KEY)
-  })
+    store.put(workspace, STORE_KEY);
+  });
 }
 
 function normalizeWorkspace(value: unknown): Workspace | null {
-  if (!value || typeof value !== 'object') {
-    return null
+  if (!value || typeof value !== "object") {
+    return null;
   }
 
-  const candidate = value as Partial<Workspace>
-  if (!candidate.pages || typeof candidate.pages !== 'object' || !Array.isArray(candidate.rootPageIds) || typeof candidate.selectedPageId !== 'string') {
-    return null
+  const candidate = value as Partial<Workspace>;
+  if (
+    !candidate.pages ||
+    typeof candidate.pages !== "object" ||
+    !Array.isArray(candidate.rootPageIds) ||
+    typeof candidate.selectedPageId !== "string"
+  ) {
+    return null;
   }
 
-  const pages: Record<string, MemoPage> = {}
+  const pages: Record<string, MemoPage> = {};
   for (const [id, rawPage] of Object.entries(candidate.pages)) {
-    if (!rawPage || typeof rawPage !== 'object') {
-      continue
+    if (!rawPage || typeof rawPage !== "object") {
+      continue;
     }
 
-    const page = rawPage as Partial<MemoPage>
-    const updatedAt = typeof page.updatedAt === 'number' && Number.isFinite(page.updatedAt) ? page.updatedAt : Date.now()
-    const isTrashed = page.isTrashed === true
+    const page = rawPage as Partial<MemoPage>;
+    const updatedAt =
+      typeof page.updatedAt === "number" && Number.isFinite(page.updatedAt)
+        ? page.updatedAt
+        : Date.now();
+    const isTrashed = page.isTrashed === true;
 
     pages[id] = {
       id,
-      title: typeof page.title === 'string' && page.title.trim() ? page.title : '無題',
-      parentId: typeof page.parentId === 'string' ? page.parentId : null,
-      childrenIds: Array.isArray(page.childrenIds) ? page.childrenIds.filter((childId): childId is string => typeof childId === 'string') : [],
-      content: typeof page.content === 'string' ? page.content : JSON.stringify(defaultContent),
+      title:
+        typeof page.title === "string" && page.title.trim()
+          ? page.title
+          : "無題",
+      parentId: typeof page.parentId === "string" ? page.parentId : null,
+      childrenIds: Array.isArray(page.childrenIds)
+        ? page.childrenIds.filter(
+            (childId): childId is string => typeof childId === "string",
+          )
+        : [],
+      content:
+        typeof page.content === "string"
+          ? page.content
+          : JSON.stringify(defaultContent),
       isPinned: page.isPinned === true,
       updatedAt,
       isTrashed,
-      trashedAt: isTrashed && typeof page.trashedAt === 'number' && Number.isFinite(page.trashedAt) ? page.trashedAt : null,
-    }
+      trashedAt:
+        isTrashed &&
+        typeof page.trashedAt === "number" &&
+        Number.isFinite(page.trashedAt)
+          ? page.trashedAt
+          : null,
+    };
   }
 
-  const rootPageIds = candidate.rootPageIds.filter((id): id is string => typeof id === 'string' && Boolean(pages[id]))
+  const rootPageIds = candidate.rootPageIds.filter(
+    (id): id is string => typeof id === "string" && Boolean(pages[id]),
+  );
   if (rootPageIds.length === 0) {
-    return createDefaultWorkspace()
+    return createDefaultWorkspace();
   }
 
-  const selectedPageId = pages[candidate.selectedPageId] ? candidate.selectedPageId : rootPageIds[0]
+  const selectedPageId = pages[candidate.selectedPageId]
+    ? candidate.selectedPageId
+    : rootPageIds[0];
 
   return {
     pages,
     rootPageIds,
     selectedPageId,
-  }
+  };
 }
 
 function parseContent(raw: string): PartialBlock[] {
   if (!raw) {
-    return defaultContent
+    return defaultContent;
   }
 
   try {
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? (parsed as PartialBlock[]) : defaultContent
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as PartialBlock[]) : defaultContent;
   } catch {
-    return defaultContent
+    return defaultContent;
   }
 }
 
-function collectDescendants(pages: Record<PageId, MemoPage>, targetId: PageId): PageId[] {
-  const page = pages[targetId]
+function collectDescendants(
+  pages: Record<PageId, MemoPage>,
+  targetId: PageId,
+): PageId[] {
+  const page = pages[targetId];
   if (!page) {
-    return []
+    return [];
   }
 
-  const collected: PageId[] = []
+  const collected: PageId[] = [];
   for (const childId of page.childrenIds) {
-    collected.push(childId, ...collectDescendants(pages, childId))
+    collected.push(childId, ...collectDescendants(pages, childId));
   }
-  return collected
+  return collected;
 }
 
-function collectWithDescendants(pages: Record<PageId, MemoPage>, targetIds: PageId[]): PageId[] {
-  const collected = new Set<PageId>()
+function collectWithDescendants(
+  pages: Record<PageId, MemoPage>,
+  targetIds: PageId[],
+): PageId[] {
+  const collected = new Set<PageId>();
   for (const targetId of targetIds) {
     if (!pages[targetId]) {
-      continue
+      continue;
     }
-    collected.add(targetId)
+    collected.add(targetId);
     for (const childId of collectDescendants(pages, targetId)) {
-      collected.add(childId)
+      collected.add(childId);
     }
   }
-  return Array.from(collected)
+  return Array.from(collected);
 }
 
-function findFirstPageId(workspace: Workspace, wantTrashed: boolean): PageId | null {
+function findFirstPageId(
+  workspace: Workspace,
+  wantTrashed: boolean,
+): PageId | null {
   for (const rootId of workspace.rootPageIds) {
-    const rootPage = workspace.pages[rootId]
+    const rootPage = workspace.pages[rootId];
     if (rootPage && rootPage.isTrashed === wantTrashed) {
-      return rootId
+      return rootId;
     }
   }
 
   for (const page of Object.values(workspace.pages)) {
     if (page.isTrashed === wantTrashed) {
-      return page.id
+      return page.id;
     }
   }
 
-  return null
+  return null;
 }
 
 function collectText(value: unknown): string[] {
-  if (typeof value === 'string') {
-    return [value]
+  if (typeof value === "string") {
+    return [value];
   }
 
   if (Array.isArray(value)) {
-    return value.flatMap((item) => collectText(item))
+    return value.flatMap((item) => collectText(item));
   }
 
-  if (value && typeof value === 'object') {
-    return Object.values(value).flatMap((item) => collectText(item))
+  if (value && typeof value === "object") {
+    return Object.values(value).flatMap((item) => collectText(item));
   }
 
-  return []
+  return [];
 }
 
 function contentToText(raw: string): string {
   try {
-    const parsed = JSON.parse(raw)
-    return collectText(parsed).join(' ')
+    const parsed = JSON.parse(raw);
+    return collectText(parsed).join(" ");
   } catch {
-    return raw
+    return raw;
   }
 }
 
 function formatDateTime(timestamp: number): string {
   if (!Number.isFinite(timestamp)) {
-    return '不明'
+    return "不明";
   }
 
-  const date = new Date(timestamp)
+  const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) {
-    return '不明'
+    return "不明";
   }
 
-  return date.toLocaleString('ja-JP', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  return date.toLocaleString("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function chooseCloudOnConflict(): boolean {
-  return window.confirm(SYNC_CONFLICT_PROMPT_MESSAGE)
+  return window.confirm(SYNC_CONFLICT_PROMPT_MESSAGE);
 }
 
 function isEditableElement(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
-    return false
+    return false;
   }
 
-  const tagName = target.tagName
-  return target.isContentEditable
-    || tagName === 'INPUT'
-    || tagName === 'TEXTAREA'
-    || tagName === 'SELECT'
-    || target.closest('[contenteditable="true"]') !== null
+  const tagName = target.tagName;
+  return (
+    target.isContentEditable ||
+    tagName === "INPUT" ||
+    tagName === "TEXTAREA" ||
+    tagName === "SELECT" ||
+    target.closest('[contenteditable="true"]') !== null
+  );
 }
 
 function downloadJson(workspace: Workspace): void {
-  const now = new Date()
-  const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
-  const blob = new Blob([JSON.stringify(workspace, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `memo-workspace-${timestamp}.json`
-  link.click()
-  URL.revokeObjectURL(url)
+  const now = new Date();
+  const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+  const blob = new Blob([JSON.stringify(workspace, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `memo-workspace-${timestamp}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
-function Editor({ content, onContentChange }: { content: string; onContentChange: (content: string) => void }) {
-  const initialContent = useMemo(() => parseContent(content), [content])
-  const editor = useCreateBlockNote({ schema: codeBlockSchema, initialContent })
+function Editor({
+  content,
+  onContentChange,
+}: {
+  content: string;
+  onContentChange: (content: string) => void;
+}) {
+  const initialContent = useMemo(() => parseContent(content), [content]);
+  const editor = useCreateBlockNote({
+    schema: codeBlockSchema,
+    initialContent,
+  });
 
   return (
     <BlockNoteView
       editor={editor}
       onChange={() => {
-        onContentChange(JSON.stringify(editor.document))
+        onContentChange(JSON.stringify(editor.document));
       }}
       slashMenu
       sideMenu
       formattingToolbar
     />
-  )
+  );
 }
 
 function App() {
-  const [workspace, setWorkspace] = useState<Workspace>(() => createDefaultWorkspace())
+  const [workspace, setWorkspace] = useState<Workspace>(() =>
+    createDefaultWorkspace(),
+  );
   const [syncSettings, setSyncSettings] = useState<SyncSettings>(() => {
     try {
-      const raw = localStorage.getItem(SYNC_SETTINGS_STORAGE_KEY)
+      const raw = localStorage.getItem(SYNC_SETTINGS_STORAGE_KEY);
       if (!raw) {
-        return createDefaultSyncSettings()
+        return createDefaultSyncSettings();
       }
-      return normalizeSyncSettings(JSON.parse(raw))
+      return normalizeSyncSettings(JSON.parse(raw));
     } catch {
-      return createDefaultSyncSettings()
+      return createDefaultSyncSettings();
     }
-  })
-  const [isLoaded, setIsLoaded] = useState(false)
-  const [isSyncSettingsOpen, setIsSyncSettingsOpen] = useState(false)
-  const [syncStatus, setSyncStatus] = useState('同期は未設定です。')
-  const [syncError, setSyncError] = useState<string | null>(null)
-  const [isSyncing, setIsSyncing] = useState(false)
-  const [needsRetry, setNeedsRetry] = useState(false)
-  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null)
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
-  const [isHelpOpen, setIsHelpOpen] = useState(false)
-  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
-  const [isSyncGuideOpen, setIsSyncGuideOpen] = useState(false)
-  const [isSidebarToolsOpen, setIsSidebarToolsOpen] = useState(false)
-  const [syncGuideCopyMessage, setSyncGuideCopyMessage] = useState<string | null>(null)
-  const [commandQuery, setCommandQuery] = useState('')
-  const [searchQuery, setSearchQuery] = useState('')
-  const [showTrash, setShowTrash] = useState(false)
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  });
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [isSyncSettingsOpen, setIsSyncSettingsOpen] = useState(false);
+  const [syncStatus, setSyncStatus] = useState("同期は未設定です。");
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [needsRetry, setNeedsRetry] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isSyncGuideOpen, setIsSyncGuideOpen] = useState(false);
+  const [isSidebarToolsOpen, setIsSidebarToolsOpen] = useState(false);
+  const [syncGuideCopyMessage, setSyncGuideCopyMessage] = useState<
+    string | null
+  >(null);
+  const [commandQuery, setCommandQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showTrash, setShowTrash] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
-    const raw = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
-    const parsed = raw ? Number(raw) : DEFAULT_SIDEBAR_WIDTH
-    return Number.isFinite(parsed) ? clampSidebarWidth(parsed) : DEFAULT_SIDEBAR_WIDTH
-  })
-  const [isSidebarResizing, setIsSidebarResizing] = useState(false)
-  const [selectedPageIds, setSelectedPageIds] = useState<PageId[]>([])
-  const [collapsedPageIds, setCollapsedPageIds] = useState<PageId[]>([])
-  const [draggingPageId, setDraggingPageId] = useState<PageId | null>(null)
-  const importInputRef = useRef<HTMLInputElement>(null)
-  const sidebarRef = useRef<HTMLElement>(null)
-  const searchInputRef = useRef<HTMLInputElement>(null)
-  const commandInputRef = useRef<HTMLInputElement>(null)
-  const workspaceRef = useRef(workspace)
-  const isSyncingRef = useRef(false)
-  const startupSyncCompletedRef = useRef(false)
-  const autoSyncTimerRef = useRef<number | null>(null)
-  const lastSyncedWorkspaceSnapshotRef = useRef<string>('')
+    const raw = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    const parsed = raw ? Number(raw) : DEFAULT_SIDEBAR_WIDTH;
+    return Number.isFinite(parsed)
+      ? clampSidebarWidth(parsed)
+      : DEFAULT_SIDEBAR_WIDTH;
+  });
+  const [isSidebarResizing, setIsSidebarResizing] = useState(false);
+  const [selectedPageIds, setSelectedPageIds] = useState<PageId[]>([]);
+  const [collapsedPageIds, setCollapsedPageIds] = useState<PageId[]>([]);
+  const [draggingPageId, setDraggingPageId] = useState<PageId | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const commandInputRef = useRef<HTMLInputElement>(null);
+  const workspaceRef = useRef(workspace);
+  const isSyncingRef = useRef(false);
+  const startupSyncCompletedRef = useRef(false);
+  const autoSyncTimerRef = useRef<number | null>(null);
+  const lastSyncedWorkspaceSnapshotRef = useRef<string>("");
 
   useEffect(() => {
-    workspaceRef.current = workspace
-  }, [workspace])
+    workspaceRef.current = workspace;
+  }, [workspace]);
 
   useEffect(() => {
-    isSyncingRef.current = isSyncing
-  }, [isSyncing])
+    isSyncingRef.current = isSyncing;
+  }, [isSyncing]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(SYNC_SETTINGS_STORAGE_KEY, JSON.stringify(syncSettings))
+      localStorage.setItem(
+        SYNC_SETTINGS_STORAGE_KEY,
+        JSON.stringify(syncSettings),
+      );
     } catch (error) {
-      console.warn('Failed to persist sync settings to localStorage. Using in-memory settings only.', error)
+      console.warn(
+        "Failed to persist sync settings to localStorage. Using in-memory settings only.",
+        error,
+      );
     }
-  }, [syncSettings])
+  }, [syncSettings]);
 
   useEffect(() => {
-    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth))
-  }, [sidebarWidth])
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
 
   useEffect(() => {
-    startupSyncCompletedRef.current = false
-    lastSyncedWorkspaceSnapshotRef.current = ''
-  }, [syncSettings.gasUrl, syncSettings.spreadsheetRef, syncSettings.syncKey])
+    startupSyncCompletedRef.current = false;
+    lastSyncedWorkspaceSnapshotRef.current = "";
+  }, [syncSettings.gasUrl, syncSettings.spreadsheetRef, syncSettings.syncKey]);
 
   useEffect(() => {
-    let mounted = true
+    let mounted = true;
 
     void loadWorkspaceFromIndexedDB()
       .then((savedWorkspace) => {
         if (mounted && savedWorkspace) {
-          setWorkspace(savedWorkspace)
+          setWorkspace(savedWorkspace);
         }
       })
       .finally(() => {
         if (mounted) {
-          setIsLoaded(true)
+          setIsLoaded(true);
         }
-      })
+      });
 
     return () => {
-      mounted = false
-    }
-  }, [])
+      mounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isLoaded) {
-      return
+      return;
     }
 
-    void saveWorkspaceToIndexedDB(workspace)
-  }, [workspace, isLoaded])
+    void saveWorkspaceToIndexedDB(workspace);
+  }, [workspace, isLoaded]);
 
   const loadCloudRecord = useCallback(async (): Promise<CloudRecord | null> => {
     if (!isSyncConfigured(syncSettings)) {
-      return null
+      return null;
     }
 
-    const response = await callSyncApiGet(syncSettings, 'get')
+    const response = await callSyncApiGet(syncSettings, "get");
     if (!response.ok) {
-      throw new Error(response.message || 'クラウドデータの取得に失敗しました。')
+      throw new Error(
+        response.message || "クラウドデータの取得に失敗しました。",
+      );
     }
-    return normalizeCloudRecord(response.data)
-  }, [syncSettings])
+    return normalizeCloudRecord(response.data);
+  }, [syncSettings]);
 
-  const saveWorkspaceToCloud = useCallback(async (targetWorkspace: Workspace, label: string, skipIfUnchanged = false) => {
-    if (!isSyncConfigured(syncSettings)) {
-      return false
-    }
-
-    const workspaceSnapshot = JSON.stringify(targetWorkspace)
-    const workspaceUpdatedAt = getWorkspaceUpdatedAt(targetWorkspace)
-    if (skipIfUnchanged && workspaceSnapshot === lastSyncedWorkspaceSnapshotRef.current) {
-      setSyncStatus('自動同期の差分はありません。')
-      setNeedsRetry(false)
-      return true
-    }
-
-    setIsSyncing(true)
-    setSyncError(null)
-    try {
-      const response = await callSyncApiSave(syncSettings, workspaceSnapshot, workspaceUpdatedAt)
-      if (!response.ok) {
-        throw new Error(response.message || 'クラウド保存に失敗しました。')
+  const saveWorkspaceToCloud = useCallback(
+    async (
+      targetWorkspace: Workspace,
+      label: string,
+      skipIfUnchanged = false,
+    ) => {
+      if (!isSyncConfigured(syncSettings)) {
+        return false;
       }
 
-      const now = Date.now()
-      setLastSyncAt(now)
-      setNeedsRetry(false)
-      lastSyncedWorkspaceSnapshotRef.current = workspaceSnapshot
-      setSyncStatus(`${label}クラウドへ保存しました。`)
-      return true
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'クラウド保存に失敗しました。'
-      setSyncError(message)
-      setNeedsRetry(true)
-      setSyncStatus('同期に失敗しました。ローカルデータは保持されています。')
-      return false
-    } finally {
-      setIsSyncing(false)
-    }
-  }, [syncSettings])
+      const workspaceSnapshot = JSON.stringify(targetWorkspace);
+      const workspaceUpdatedAt = getWorkspaceUpdatedAt(targetWorkspace);
+      if (
+        skipIfUnchanged &&
+        workspaceSnapshot === lastSyncedWorkspaceSnapshotRef.current
+      ) {
+        setSyncStatus("自動同期の差分はありません。");
+        setNeedsRetry(false);
+        return true;
+      }
+
+      setIsSyncing(true);
+      setSyncError(null);
+      try {
+        const response = await callSyncApiSave(
+          syncSettings,
+          workspaceSnapshot,
+          workspaceUpdatedAt,
+        );
+        if (!response.ok) {
+          throw new Error(response.message || "クラウド保存に失敗しました。");
+        }
+
+        const now = Date.now();
+        setLastSyncAt(now);
+        setNeedsRetry(false);
+        lastSyncedWorkspaceSnapshotRef.current = workspaceSnapshot;
+        setSyncStatus(`${label}クラウドへ保存しました。`);
+        return true;
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "クラウド保存に失敗しました。";
+        setSyncError(message);
+        setNeedsRetry(true);
+        setSyncStatus("同期に失敗しました。ローカルデータは保持されています。");
+        return false;
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    [syncSettings],
+  );
 
   const syncNow = useCallback(async () => {
     if (!isSyncConfigured(syncSettings)) {
-      setSyncError('同期設定を完了してください。')
-      return
+      setSyncError("同期設定を完了してください。");
+      return;
     }
 
-    setIsSyncing(true)
-    setSyncError(null)
+    setIsSyncing(true);
+    setSyncError(null);
     try {
-      const local = workspaceRef.current
-      const cloud = await loadCloudRecord()
+      const local = workspaceRef.current;
+      const cloud = await loadCloudRecord();
       if (!cloud) {
-        await saveWorkspaceToCloud(local, '手動同期で')
-        return
+        await saveWorkspaceToCloud(local, "手動同期で");
+        return;
       }
 
-      const localUpdatedAt = getWorkspaceUpdatedAt(local)
-      const cloudWorkspace = normalizeWorkspace(JSON.parse(cloud.workspaceJson))
+      const localUpdatedAt = getWorkspaceUpdatedAt(local);
+      const cloudWorkspace = normalizeWorkspace(
+        JSON.parse(cloud.workspaceJson),
+      );
       if (!cloudWorkspace) {
-        throw new Error('クラウドデータの形式が不正です。')
+        throw new Error("クラウドデータの形式が不正です。");
       }
 
       if (cloud.updatedAt > localUpdatedAt) {
-        setWorkspace(cloudWorkspace)
-        setLastSyncAt(Date.now())
-        setNeedsRetry(false)
-        setSyncStatus('手動同期でクラウドの新しいデータを反映しました。')
-        return
+        setWorkspace(cloudWorkspace);
+        setLastSyncAt(Date.now());
+        setNeedsRetry(false);
+        setSyncStatus("手動同期でクラウドの新しいデータを反映しました。");
+        return;
       }
 
       if (localUpdatedAt > cloud.updatedAt) {
-        await saveWorkspaceToCloud(local, '手動同期で')
-        return
+        await saveWorkspaceToCloud(local, "手動同期で");
+        return;
       }
 
-      const localSnapshot = JSON.stringify(local)
+      const localSnapshot = JSON.stringify(local);
       if (localSnapshot === cloud.workspaceJson) {
-        setLastSyncAt(Date.now())
-        setNeedsRetry(false)
-        setSyncStatus('手動同期で差分はありませんでした。')
-        return
+        setLastSyncAt(Date.now());
+        setNeedsRetry(false);
+        setSyncStatus("手動同期で差分はありませんでした。");
+        return;
       }
 
-      const useCloud = chooseCloudOnConflict()
+      const useCloud = chooseCloudOnConflict();
       if (useCloud) {
-        setWorkspace(cloudWorkspace)
-        setLastSyncAt(Date.now())
-        setNeedsRetry(false)
-        setSyncStatus('競合解決でクラウドデータを採用しました。')
+        setWorkspace(cloudWorkspace);
+        setLastSyncAt(Date.now());
+        setNeedsRetry(false);
+        setSyncStatus("競合解決でクラウドデータを採用しました。");
       } else {
-        await saveWorkspaceToCloud(local, '競合解決で')
+        await saveWorkspaceToCloud(local, "競合解決で");
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : '同期に失敗しました。'
-      setSyncError(message)
-      setNeedsRetry(true)
-      setSyncStatus('同期に失敗しました。ローカルデータは保持されています。')
+      const message =
+        error instanceof Error ? error.message : "同期に失敗しました。";
+      setSyncError(message);
+      setNeedsRetry(true);
+      setSyncStatus("同期に失敗しました。ローカルデータは保持されています。");
     } finally {
-      setIsSyncing(false)
+      setIsSyncing(false);
     }
-  }, [loadCloudRecord, saveWorkspaceToCloud, syncSettings])
+  }, [loadCloudRecord, saveWorkspaceToCloud, syncSettings]);
 
   const restoreFromCloud = useCallback(async () => {
     if (!isSyncConfigured(syncSettings)) {
-      setSyncError('同期設定を完了してください。')
-      return
+      setSyncError("同期設定を完了してください。");
+      return;
     }
 
-    setIsSyncing(true)
-    setSyncError(null)
+    setIsSyncing(true);
+    setSyncError(null);
     try {
-      const cloud = await loadCloudRecord()
+      const cloud = await loadCloudRecord();
       if (!cloud) {
-        throw new Error('クラウドに復元可能なデータがありません。')
+        throw new Error("クラウドに復元可能なデータがありません。");
       }
 
-      const parsed = normalizeWorkspace(JSON.parse(cloud.workspaceJson))
+      const parsed = normalizeWorkspace(JSON.parse(cloud.workspaceJson));
       if (!parsed) {
-        throw new Error('クラウドデータの形式が不正です。')
+        throw new Error("クラウドデータの形式が不正です。");
       }
 
-      const accepted = window.confirm('クラウドデータでローカルを上書きします。続行しますか？')
+      const accepted = window.confirm(
+        "クラウドデータでローカルを上書きします。続行しますか？",
+      );
       if (!accepted) {
-        setSyncStatus('クラウド復元をキャンセルしました。')
-        return
+        setSyncStatus("クラウド復元をキャンセルしました。");
+        return;
       }
 
-      setWorkspace(parsed)
-      setShowTrash(false)
-      setLastSyncAt(Date.now())
-      setNeedsRetry(false)
-      setSyncStatus('クラウドデータから復元しました。')
+      setWorkspace(parsed);
+      setShowTrash(false);
+      setLastSyncAt(Date.now());
+      setNeedsRetry(false);
+      setSyncStatus("クラウドデータから復元しました。");
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'クラウド復元に失敗しました。'
-      setSyncError(message)
-      setNeedsRetry(true)
-      setSyncStatus('クラウド復元に失敗しました。')
+      const message =
+        error instanceof Error ? error.message : "クラウド復元に失敗しました。";
+      setSyncError(message);
+      setNeedsRetry(true);
+      setSyncStatus("クラウド復元に失敗しました。");
     } finally {
-      setIsSyncing(false)
+      setIsSyncing(false);
     }
-  }, [loadCloudRecord, syncSettings])
+  }, [loadCloudRecord, syncSettings]);
 
   const testSyncConnection = useCallback(async () => {
     if (!isSyncConfigured(syncSettings)) {
-      setSyncError('同期設定を完了してください。')
-      return
+      setSyncError("同期設定を完了してください。");
+      return;
     }
 
-    setIsSyncing(true)
-    setSyncError(null)
+    setIsSyncing(true);
+    setSyncError(null);
     try {
-      const response = await callSyncApiGet(syncSettings, 'test')
+      const response = await callSyncApiGet(syncSettings, "test");
       if (!response.ok) {
-        throw new Error(response.message || '接続テストに失敗しました。')
+        throw new Error(response.message || "接続テストに失敗しました。");
       }
-      setSyncStatus('接続テスト成功: GASとスプレッドシートに接続できました。')
-      setNeedsRetry(false)
+      setSyncStatus("接続テスト成功: GASとスプレッドシートに接続できました。");
+      setNeedsRetry(false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : '接続テストに失敗しました。'
-      setSyncError(message)
-      setNeedsRetry(true)
-      setSyncStatus('接続テストに失敗しました。')
+      const message =
+        error instanceof Error ? error.message : "接続テストに失敗しました。";
+      setSyncError(message);
+      setNeedsRetry(true);
+      setSyncStatus("接続テストに失敗しました。");
     } finally {
-      setIsSyncing(false)
+      setIsSyncing(false);
     }
-  }, [syncSettings])
+  }, [syncSettings]);
 
   useEffect(() => {
     if (!isLoaded || startupSyncCompletedRef.current) {
-      return
+      return;
     }
 
     if (!isSyncConfigured(syncSettings)) {
-      startupSyncCompletedRef.current = true
-      return
+      startupSyncCompletedRef.current = true;
+      return;
     }
 
-    let cancelled = false
+    let cancelled = false;
     void Promise.resolve()
       .then(() => {
         if (cancelled) {
-          return null
+          return null;
         }
-        setIsSyncing(true)
-        setSyncError(null)
-        return loadCloudRecord()
+        setIsSyncing(true);
+        setSyncError(null);
+        return loadCloudRecord();
       })
       .then(async (cloud) => {
         if (cancelled) {
-          return
+          return;
         }
 
-        const local = workspaceRef.current
-        const localUpdatedAt = getWorkspaceUpdatedAt(local)
+        const local = workspaceRef.current;
+        const localUpdatedAt = getWorkspaceUpdatedAt(local);
         if (!cloud) {
-          await saveWorkspaceToCloud(local, '初期同期で')
-          return
+          await saveWorkspaceToCloud(local, "初期同期で");
+          return;
         }
 
-        const parsedCloud = normalizeWorkspace(JSON.parse(cloud.workspaceJson))
+        const parsedCloud = normalizeWorkspace(JSON.parse(cloud.workspaceJson));
         if (!parsedCloud) {
-          throw new Error('クラウドデータの形式が不正です。')
+          throw new Error("クラウドデータの形式が不正です。");
         }
 
         if (cloud.updatedAt > localUpdatedAt) {
-          setWorkspace(parsedCloud)
-          setLastSyncAt(Date.now())
-          setNeedsRetry(false)
-          setSyncStatus('初期同期でクラウドデータを反映しました。')
-          return
+          setWorkspace(parsedCloud);
+          setLastSyncAt(Date.now());
+          setNeedsRetry(false);
+          setSyncStatus("初期同期でクラウドデータを反映しました。");
+          return;
         }
 
         if (localUpdatedAt > cloud.updatedAt) {
-          await saveWorkspaceToCloud(local, '初期同期で')
-          return
+          await saveWorkspaceToCloud(local, "初期同期で");
+          return;
         }
 
-        const localSnapshot = JSON.stringify(local)
+        const localSnapshot = JSON.stringify(local);
         if (localSnapshot !== cloud.workspaceJson) {
-          const useCloud = chooseCloudOnConflict()
+          const useCloud = chooseCloudOnConflict();
           if (useCloud) {
-            setWorkspace(parsedCloud)
-            setLastSyncAt(Date.now())
-            setNeedsRetry(false)
-            setSyncStatus('競合解決でクラウドデータを採用しました。')
-            return
+            setWorkspace(parsedCloud);
+            setLastSyncAt(Date.now());
+            setNeedsRetry(false);
+            setSyncStatus("競合解決でクラウドデータを採用しました。");
+            return;
           }
-          await saveWorkspaceToCloud(local, '競合解決で')
-          return
+          await saveWorkspaceToCloud(local, "競合解決で");
+          return;
         }
 
-        setLastSyncAt(Date.now())
-        setNeedsRetry(false)
-        setSyncStatus('初期同期が完了しました。')
+        setLastSyncAt(Date.now());
+        setNeedsRetry(false);
+        setSyncStatus("初期同期が完了しました。");
       })
       .catch((error) => {
         if (cancelled) {
-          return
+          return;
         }
-        const message = error instanceof Error ? error.message : '初期同期に失敗しました。'
-        setSyncError(message)
-        setNeedsRetry(true)
-        setSyncStatus('初期同期に失敗しました。ローカルデータを使用しています。')
+        const message =
+          error instanceof Error ? error.message : "初期同期に失敗しました。";
+        setSyncError(message);
+        setNeedsRetry(true);
+        setSyncStatus(
+          "初期同期に失敗しました。ローカルデータを使用しています。",
+        );
       })
       .finally(() => {
         if (!cancelled) {
-          setIsSyncing(false)
-          startupSyncCompletedRef.current = true
+          setIsSyncing(false);
+          startupSyncCompletedRef.current = true;
         }
-      })
+      });
 
     return () => {
-      cancelled = true
-    }
-  }, [isLoaded, loadCloudRecord, saveWorkspaceToCloud, syncSettings])
+      cancelled = true;
+    };
+  }, [isLoaded, loadCloudRecord, saveWorkspaceToCloud, syncSettings]);
 
   useEffect(() => {
-    if (!isLoaded || isSyncing || !startupSyncCompletedRef.current || !isSyncConfigured(syncSettings)) {
-      return
+    if (
+      !isLoaded ||
+      isSyncing ||
+      !startupSyncCompletedRef.current ||
+      !isSyncConfigured(syncSettings)
+    ) {
+      return;
     }
 
     if (autoSyncTimerRef.current) {
-      window.clearTimeout(autoSyncTimerRef.current)
+      window.clearTimeout(autoSyncTimerRef.current);
     }
 
     autoSyncTimerRef.current = window.setTimeout(() => {
       // Prevent overlapping sync requests when another sync started during debounce wait.
       if (isSyncingRef.current) {
-        return
+        return;
       }
-      void saveWorkspaceToCloud(workspaceRef.current, '自動同期で', true)
-    }, SYNC_DEBOUNCE_MS)
+      void saveWorkspaceToCloud(workspaceRef.current, "自動同期で", true);
+    }, SYNC_DEBOUNCE_MS);
 
     return () => {
       if (autoSyncTimerRef.current) {
-        window.clearTimeout(autoSyncTimerRef.current)
+        window.clearTimeout(autoSyncTimerRef.current);
       }
-    }
-  }, [workspace, isLoaded, isSyncing, saveWorkspaceToCloud, syncSettings])
+    };
+  }, [workspace, isLoaded, isSyncing, saveWorkspaceToCloud, syncSettings]);
 
   useEffect(() => {
     if (!contextMenu) {
-      return
+      return;
     }
 
-    const hide = () => setContextMenu(null)
-    window.addEventListener('click', hide)
+    const hide = () => setContextMenu(null);
+    window.addEventListener("click", hide);
     return () => {
-      window.removeEventListener('click', hide)
-    }
-  }, [contextMenu])
+      window.removeEventListener("click", hide);
+    };
+  }, [contextMenu]);
 
   useEffect(() => {
     if (!isCommandPaletteOpen) {
-      return
+      return;
     }
 
-    commandInputRef.current?.focus()
-    commandInputRef.current?.select()
-  }, [isCommandPaletteOpen])
+    commandInputRef.current?.focus();
+    commandInputRef.current?.select();
+  }, [isCommandPaletteOpen]);
 
   const addPage = useCallback((parentId: PageId | null) => {
-    let createdPageId: PageId | null = null
+    let createdPageId: PageId | null = null;
     setWorkspace((previousWorkspace) => {
-      const nextPage = createPage(parentId)
-      createdPageId = nextPage.id
+      const nextPage = createPage(parentId);
+      createdPageId = nextPage.id;
       const nextPages = {
         ...previousWorkspace.pages,
         [nextPage.id]: nextPage,
-      }
+      };
 
       if (parentId && nextPages[parentId]) {
         nextPages[parentId] = {
           ...nextPages[parentId],
           childrenIds: [...nextPages[parentId].childrenIds, nextPage.id],
           updatedAt: Date.now(),
-        }
+        };
       }
 
       return {
         ...previousWorkspace,
         pages: nextPages,
-        rootPageIds: parentId ? previousWorkspace.rootPageIds : [...previousWorkspace.rootPageIds, nextPage.id],
+        rootPageIds: parentId
+          ? previousWorkspace.rootPageIds
+          : [...previousWorkspace.rootPageIds, nextPage.id],
         selectedPageId: nextPage.id,
+      };
+    });
+    setShowTrash(false);
+    setSelectedPageIds(createdPageId ? [createdPageId] : []);
+    setContextMenu(null);
+  }, []);
+
+  const renamePage = useCallback(
+    (pageId: PageId) => {
+      const current = workspace.pages[pageId];
+      if (!current || current.isTrashed) {
+        return;
       }
-    })
-    setShowTrash(false)
-    setSelectedPageIds(createdPageId ? [createdPageId] : [])
-    setContextMenu(null)
-  }, [])
 
-  const renamePage = useCallback((pageId: PageId) => {
-    const current = workspace.pages[pageId]
-    if (!current || current.isTrashed) {
-      return
-    }
+      const nextTitle = window
+        .prompt("ページ名を入力してください", current.title)
+        ?.trim();
+      if (!nextTitle) {
+        return;
+      }
 
-    const nextTitle = window.prompt('ページ名を入力してください', current.title)?.trim()
-    if (!nextTitle) {
-      return
-    }
-
-    setWorkspace((previousWorkspace) => ({
-      ...previousWorkspace,
-      pages: {
-        ...previousWorkspace.pages,
-        [pageId]: {
-          ...previousWorkspace.pages[pageId],
-          title: nextTitle,
-          updatedAt: Date.now(),
+      setWorkspace((previousWorkspace) => ({
+        ...previousWorkspace,
+        pages: {
+          ...previousWorkspace.pages,
+          [pageId]: {
+            ...previousWorkspace.pages[pageId],
+            title: nextTitle,
+            updatedAt: Date.now(),
+          },
         },
-      },
-    }))
-    setContextMenu(null)
-  }, [workspace.pages])
+      }));
+      setContextMenu(null);
+    },
+    [workspace.pages],
+  );
 
   const togglePin = useCallback((pageId: PageId) => {
     setWorkspace((previousWorkspace) => {
-      const page = previousWorkspace.pages[pageId]
+      const page = previousWorkspace.pages[pageId];
       if (!page || page.isTrashed) {
-        return previousWorkspace
+        return previousWorkspace;
       }
 
       return {
@@ -1065,20 +1207,20 @@ function App() {
             updatedAt: Date.now(),
           },
         },
-      }
-    })
-    setContextMenu(null)
-  }, [])
+      };
+    });
+    setContextMenu(null);
+  }, []);
 
   const movePageToRoot = useCallback((pageId: PageId) => {
     setWorkspace((previousWorkspace) => {
-      const targetPage = previousWorkspace.pages[pageId]
+      const targetPage = previousWorkspace.pages[pageId];
       if (!targetPage || targetPage.parentId === null || targetPage.isTrashed) {
-        return previousWorkspace
+        return previousWorkspace;
       }
 
-      const parentPage = previousWorkspace.pages[targetPage.parentId]
-      const now = Date.now()
+      const parentPage = previousWorkspace.pages[targetPage.parentId];
+      const now = Date.now();
       const nextPages = {
         ...previousWorkspace.pages,
         [pageId]: {
@@ -1086,202 +1228,254 @@ function App() {
           parentId: null,
           updatedAt: now,
         },
-      }
+      };
 
       if (parentPage) {
         nextPages[parentPage.id] = {
           ...parentPage,
-          childrenIds: parentPage.childrenIds.filter((childId) => childId !== pageId),
+          childrenIds: parentPage.childrenIds.filter(
+            (childId) => childId !== pageId,
+          ),
           updatedAt: now,
-        }
+        };
       }
 
       const nextRootPageIds = previousWorkspace.rootPageIds.includes(pageId)
         ? previousWorkspace.rootPageIds
-        : [...previousWorkspace.rootPageIds, pageId]
+        : [...previousWorkspace.rootPageIds, pageId];
 
       return {
         ...previousWorkspace,
         pages: nextPages,
         rootPageIds: nextRootPageIds,
-      }
-    })
-    setContextMenu(null)
-  }, [])
+      };
+    });
+    setContextMenu(null);
+  }, []);
 
-  const movePageToTrash = useCallback((pageId: PageId) => {
-    setWorkspace((previousWorkspace) => {
-      const selectedTargets = selectedPageIds.includes(pageId) ? selectedPageIds : [pageId]
-      const targetIds = selectedTargets.filter((id) => {
-        const page = previousWorkspace.pages[id]
-        return page && !page.isTrashed
-      })
-      if (targetIds.length === 0) {
-        return previousWorkspace
-      }
-
-      const now = Date.now()
-      const allTrashIds = collectWithDescendants(previousWorkspace.pages, targetIds)
-      const trashSet = new Set(allTrashIds)
-      const nextPages = {
-        ...previousWorkspace.pages,
-      }
-
-      for (const id of trashSet) {
-        const page = previousWorkspace.pages[id]
-        if (!page) {
-          continue
+  const movePageToTrash = useCallback(
+    (pageId: PageId) => {
+      setWorkspace((previousWorkspace) => {
+        const selectedTargets = selectedPageIds.includes(pageId)
+          ? selectedPageIds
+          : [pageId];
+        const targetIds = selectedTargets.filter((id) => {
+          const page = previousWorkspace.pages[id];
+          return page && !page.isTrashed;
+        });
+        if (targetIds.length === 0) {
+          return previousWorkspace;
         }
 
-        nextPages[id] = {
-          ...page,
-          isTrashed: true,
-          trashedAt: now,
-          updatedAt: now,
-        }
-      }
+        const now = Date.now();
+        const allTrashIds = collectWithDescendants(
+          previousWorkspace.pages,
+          targetIds,
+        );
+        const trashSet = new Set(allTrashIds);
+        const nextPages = {
+          ...previousWorkspace.pages,
+        };
 
-      let nextSelectedPageId = previousWorkspace.selectedPageId
-      if (trashSet.has(previousWorkspace.selectedPageId)) {
-        nextSelectedPageId = findFirstPageId({ ...previousWorkspace, pages: nextPages }, false) ?? previousWorkspace.selectedPageId
-      }
-
-      return {
-        ...previousWorkspace,
-        pages: nextPages,
-        selectedPageId: nextSelectedPageId,
-      }
-    })
-
-    setContextMenu(null)
-  }, [selectedPageIds])
-
-  const restorePage = useCallback((pageId: PageId) => {
-    setWorkspace((previousWorkspace) => {
-      const selectedTargets = selectedPageIds.includes(pageId) ? selectedPageIds : [pageId]
-      const targetIds = selectedTargets.filter((id) => {
-        const page = previousWorkspace.pages[id]
-        return page && page.isTrashed
-      })
-      if (targetIds.length === 0) {
-        return previousWorkspace
-      }
-
-      const now = Date.now()
-      const allRestoreIds = collectWithDescendants(previousWorkspace.pages, targetIds)
-      const restoreSet = new Set(allRestoreIds)
-      const nextPages = {
-        ...previousWorkspace.pages,
-      }
-
-      for (const id of restoreSet) {
-        const page = previousWorkspace.pages[id]
-        if (!page) {
-          continue
-        }
-
-        nextPages[id] = {
-          ...page,
-          isTrashed: false,
-          trashedAt: null,
-          updatedAt: now,
-        }
-      }
-
-      const restoredTarget = nextPages[pageId]
-      if (restoredTarget.parentId) {
-        const parent = nextPages[restoredTarget.parentId]
-        if (!parent || parent.isTrashed) {
-          nextPages[pageId] = {
-            ...restoredTarget,
-            parentId: null,
+        for (const id of trashSet) {
+          const page = previousWorkspace.pages[id];
+          if (!page) {
+            continue;
           }
-          if (!previousWorkspace.rootPageIds.includes(pageId)) {
-            return {
-              ...previousWorkspace,
-              pages: nextPages,
-              rootPageIds: [...previousWorkspace.rootPageIds, pageId],
-              selectedPageId: pageId,
+
+          nextPages[id] = {
+            ...page,
+            isTrashed: true,
+            trashedAt: now,
+            updatedAt: now,
+          };
+        }
+
+        let nextSelectedPageId = previousWorkspace.selectedPageId;
+        if (trashSet.has(previousWorkspace.selectedPageId)) {
+          nextSelectedPageId =
+            findFirstPageId(
+              { ...previousWorkspace, pages: nextPages },
+              false,
+            ) ?? previousWorkspace.selectedPageId;
+        }
+
+        return {
+          ...previousWorkspace,
+          pages: nextPages,
+          selectedPageId: nextSelectedPageId,
+        };
+      });
+
+      setContextMenu(null);
+    },
+    [selectedPageIds],
+  );
+
+  const restorePage = useCallback(
+    (pageId: PageId) => {
+      setWorkspace((previousWorkspace) => {
+        const selectedTargets = selectedPageIds.includes(pageId)
+          ? selectedPageIds
+          : [pageId];
+        const targetIds = selectedTargets.filter((id) => {
+          const page = previousWorkspace.pages[id];
+          return page && page.isTrashed;
+        });
+        if (targetIds.length === 0) {
+          return previousWorkspace;
+        }
+
+        const now = Date.now();
+        const allRestoreIds = collectWithDescendants(
+          previousWorkspace.pages,
+          targetIds,
+        );
+        const restoreSet = new Set(allRestoreIds);
+        const nextPages = {
+          ...previousWorkspace.pages,
+        };
+
+        for (const id of restoreSet) {
+          const page = previousWorkspace.pages[id];
+          if (!page) {
+            continue;
+          }
+
+          nextPages[id] = {
+            ...page,
+            isTrashed: false,
+            trashedAt: null,
+            updatedAt: now,
+          };
+        }
+
+        const restoredTarget = nextPages[pageId];
+        if (restoredTarget.parentId) {
+          const parent = nextPages[restoredTarget.parentId];
+          if (!parent || parent.isTrashed) {
+            nextPages[pageId] = {
+              ...restoredTarget,
+              parentId: null,
+            };
+            if (!previousWorkspace.rootPageIds.includes(pageId)) {
+              return {
+                ...previousWorkspace,
+                pages: nextPages,
+                rootPageIds: [...previousWorkspace.rootPageIds, pageId],
+                selectedPageId: pageId,
+              };
             }
           }
         }
+
+        return {
+          ...previousWorkspace,
+          pages: nextPages,
+          selectedPageId: pageId,
+        };
+      });
+
+      setShowTrash(false);
+      setContextMenu(null);
+      setSelectedPageIds([]);
+    },
+    [selectedPageIds],
+  );
+
+  const permanentlyDeletePage = useCallback(
+    (pageId: PageId) => {
+      const selectedTargets = selectedPageIds.includes(pageId)
+        ? selectedPageIds
+        : [pageId];
+      const targetCount = selectedTargets.length;
+      const accepted = window.confirm(
+        targetCount > 1
+          ? `選択中の ${targetCount} ページ（子ページ含む）を完全に削除します。元に戻せません。続行しますか？`
+          : "このページと子ページを完全に削除します。元に戻せません。続行しますか？",
+      );
+      if (!accepted) {
+        return;
       }
 
-      return {
-        ...previousWorkspace,
-        pages: nextPages,
-        selectedPageId: pageId,
-      }
-    })
+      setWorkspace((previousWorkspace) => {
+        const targetIds = selectedTargets.filter((id) => {
+          const page = previousWorkspace.pages[id];
+          return page && page.isTrashed;
+        });
+        if (targetIds.length === 0) {
+          return previousWorkspace;
+        }
 
-    setShowTrash(false)
-    setContextMenu(null)
-    setSelectedPageIds([])
-  }, [selectedPageIds])
+        const allDeleteIds = collectWithDescendants(
+          previousWorkspace.pages,
+          targetIds,
+        );
+        const deleteSet = new Set(allDeleteIds);
+        const nextPages = Object.fromEntries(
+          Object.entries(previousWorkspace.pages)
+            .filter(([id]) => !deleteSet.has(id))
+            .map(([id, page]) => [
+              id,
+              {
+                ...page,
+                childrenIds: page.childrenIds.filter(
+                  (childId) => !deleteSet.has(childId),
+                ),
+              },
+            ]),
+        );
 
-  const permanentlyDeletePage = useCallback((pageId: PageId) => {
-    const selectedTargets = selectedPageIds.includes(pageId) ? selectedPageIds : [pageId]
-    const targetCount = selectedTargets.length
-    const accepted = window.confirm(
-      targetCount > 1
-        ? `選択中の ${targetCount} ページ（子ページ含む）を完全に削除します。元に戻せません。続行しますか？`
-        : 'このページと子ページを完全に削除します。元に戻せません。続行しますか？',
-    )
-    if (!accepted) {
-      return
-    }
+        const nextRootPageIds = previousWorkspace.rootPageIds.filter(
+          (rootId) => !deleteSet.has(rootId),
+        );
+        if (
+          Object.keys(nextPages).length === 0 ||
+          nextRootPageIds.length === 0
+        ) {
+          return createDefaultWorkspace();
+        }
 
-    setWorkspace((previousWorkspace) => {
-      const targetIds = selectedTargets.filter((id) => {
-        const page = previousWorkspace.pages[id]
-        return page && page.isTrashed
-      })
-      if (targetIds.length === 0) {
-        return previousWorkspace
-      }
+        let nextSelectedPageId = previousWorkspace.selectedPageId;
+        if (!nextPages[nextSelectedPageId]) {
+          nextSelectedPageId =
+            findFirstPageId(
+              {
+                pages: nextPages,
+                rootPageIds: nextRootPageIds,
+                selectedPageId: previousWorkspace.selectedPageId,
+              },
+              true,
+            ) ??
+            findFirstPageId(
+              {
+                pages: nextPages,
+                rootPageIds: nextRootPageIds,
+                selectedPageId: previousWorkspace.selectedPageId,
+              },
+              false,
+            ) ??
+            nextRootPageIds[0];
+        }
 
-      const allDeleteIds = collectWithDescendants(previousWorkspace.pages, targetIds)
-      const deleteSet = new Set(allDeleteIds)
-      const nextPages = Object.fromEntries(
-        Object.entries(previousWorkspace.pages)
-          .filter(([id]) => !deleteSet.has(id))
-          .map(([id, page]) => [
-            id,
-            {
-              ...page,
-              childrenIds: page.childrenIds.filter((childId) => !deleteSet.has(childId)),
-            },
-          ]),
-      )
+        return {
+          pages: nextPages,
+          rootPageIds: nextRootPageIds,
+          selectedPageId: nextSelectedPageId,
+        };
+      });
 
-      const nextRootPageIds = previousWorkspace.rootPageIds.filter((rootId) => !deleteSet.has(rootId))
-      if (Object.keys(nextPages).length === 0 || nextRootPageIds.length === 0) {
-        return createDefaultWorkspace()
-      }
-
-      let nextSelectedPageId = previousWorkspace.selectedPageId
-      if (!nextPages[nextSelectedPageId]) {
-        nextSelectedPageId = findFirstPageId({ pages: nextPages, rootPageIds: nextRootPageIds, selectedPageId: previousWorkspace.selectedPageId }, true)
-          ?? findFirstPageId({ pages: nextPages, rootPageIds: nextRootPageIds, selectedPageId: previousWorkspace.selectedPageId }, false)
-          ?? nextRootPageIds[0]
-      }
-
-      return {
-        pages: nextPages,
-        rootPageIds: nextRootPageIds,
-        selectedPageId: nextSelectedPageId,
-      }
-    })
-
-    setContextMenu(null)
-    setSelectedPageIds([])
-  }, [selectedPageIds])
+      setContextMenu(null);
+      setSelectedPageIds([]);
+    },
+    [selectedPageIds],
+  );
 
   const onPageContentChange = useCallback((pageId: PageId, content: string) => {
     setWorkspace((previousWorkspace) => {
-      const page = previousWorkspace.pages[pageId]
+      const page = previousWorkspace.pages[pageId];
       if (!page || page.content === content) {
-        return previousWorkspace
+        return previousWorkspace;
       }
 
       return {
@@ -1294,607 +1488,745 @@ function App() {
             updatedAt: Date.now(),
           },
         },
+      };
+    });
+  }, []);
+
+  const importJson = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) {
+        return;
       }
-    })
-  }, [])
 
-  const importJson = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) {
-      return
-    }
-
-    try {
-      const json = await file.text()
-      const parsed = normalizeWorkspace(JSON.parse(json))
-      if (parsed) {
-        setWorkspace(parsed)
-        setShowTrash(false)
+      try {
+        const json = await file.text();
+        const parsed = normalizeWorkspace(JSON.parse(json));
+        if (parsed) {
+          setWorkspace(parsed);
+          setShowTrash(false);
+        }
+      } catch {
+        window.alert("JSONの読み込みに失敗しました。");
       }
-    } catch {
-      window.alert('JSONの読み込みに失敗しました。')
-    }
 
-    setIsSidebarToolsOpen(false)
-    event.target.value = ''
-  }, [])
+      setIsSidebarToolsOpen(false);
+      event.target.value = "";
+    },
+    [],
+  );
 
   const openHelpWindow = useCallback(() => {
-    setIsHelpOpen(true)
-    setIsSidebarToolsOpen(false)
-    setContextMenu(null)
-  }, [])
+    setIsHelpOpen(true);
+    setIsSidebarToolsOpen(false);
+    setContextMenu(null);
+  }, []);
 
-  const openCommandPalette = useCallback((prefix = '') => {
-    setCommandQuery(prefix)
-    setIsCommandPaletteOpen(true)
-    setIsSidebarToolsOpen(false)
-    setContextMenu(null)
-  }, [])
+  const openCommandPalette = useCallback((prefix = "") => {
+    setCommandQuery(prefix);
+    setIsCommandPaletteOpen(true);
+    setIsSidebarToolsOpen(false);
+    setContextMenu(null);
+  }, []);
 
-  const selectedPage = workspace.pages[workspace.selectedPageId] ?? null
+  const selectedPage = workspace.pages[workspace.selectedPageId] ?? null;
 
   const commandActions = useMemo<CommandAction[]>(() => {
-    const canEditSelected = Boolean(selectedPage && !selectedPage.isTrashed)
+    const canEditSelected = Boolean(selectedPage && !selectedPage.isTrashed);
 
     return [
       {
-        id: 'create-root',
-        label: '/new ルートページを作成',
-        description: '新しいルートページを追加します',
-        shortcut: 'Ctrl/Cmd + Shift + N',
-        tags: ['new', 'root', 'page', 'ルート', '作成'],
-        prefixes: ['/'],
+        id: "create-root",
+        label: "/new ルートページを作成",
+        description: "新しいルートページを追加します",
+        shortcut: "Ctrl/Cmd + Shift + N",
+        tags: ["new", "root", "page", "ルート", "作成"],
+        prefixes: ["/"],
       },
       {
-        id: 'create-child',
-        label: '@child 子ページを作成',
-        description: '現在のページの子ページを追加します',
-        shortcut: 'Ctrl/Cmd + N',
-        tags: ['child', 'sub', '子ページ', '作成'],
-        prefixes: ['@'],
+        id: "create-child",
+        label: "@child 子ページを作成",
+        description: "現在のページの子ページを追加します",
+        shortcut: "Ctrl/Cmd + N",
+        tags: ["child", "sub", "子ページ", "作成"],
+        prefixes: ["@"],
         disabled: !canEditSelected,
       },
       {
-        id: 'rename-page',
-        label: '@rename ページ名を変更',
-        description: '現在のページ名を変更します',
-        shortcut: 'Ctrl/Cmd + R',
-        tags: ['rename', 'title', '名前変更', 'ページ名'],
-        prefixes: ['@'],
+        id: "rename-page",
+        label: "@rename ページ名を変更",
+        description: "現在のページ名を変更します",
+        shortcut: "Ctrl/Cmd + R",
+        tags: ["rename", "title", "名前変更", "ページ名"],
+        prefixes: ["@"],
         disabled: !canEditSelected,
       },
       {
-        id: 'toggle-pin',
-        label: '@pin ピン留め切替',
-        description: '現在のページのピン留めを切り替えます',
-        shortcut: 'Ctrl/Cmd + Shift + P',
-        tags: ['pin', 'favorite', 'ピン', '固定'],
-        prefixes: ['@'],
+        id: "toggle-pin",
+        label: "@pin ピン留め切替",
+        description: "現在のページのピン留めを切り替えます",
+        shortcut: "Ctrl/Cmd + Shift + P",
+        tags: ["pin", "favorite", "ピン", "固定"],
+        prefixes: ["@"],
         disabled: !canEditSelected,
       },
       {
-        id: 'move-trash',
-        label: '@trash ごみ箱へ移動',
-        description: '現在のページをごみ箱に移動します',
-        shortcut: 'Ctrl/Cmd + Delete',
-        tags: ['trash', 'delete', 'ごみ箱', '削除'],
-        prefixes: ['@'],
+        id: "move-trash",
+        label: "@trash ごみ箱へ移動",
+        description: "現在のページをごみ箱に移動します",
+        shortcut: "Ctrl/Cmd + Delete",
+        tags: ["trash", "delete", "ごみ箱", "削除"],
+        prefixes: ["@"],
         disabled: !canEditSelected,
       },
       {
-        id: 'focus-search',
-        label: '/search 検索にフォーカス',
-        description: '検索欄へフォーカスします',
-        shortcut: 'Ctrl/Cmd + K',
-        tags: ['search', 'find', '検索'],
-        prefixes: ['/'],
+        id: "focus-search",
+        label: "/search 検索にフォーカス",
+        description: "検索欄へフォーカスします",
+        shortcut: "Ctrl/Cmd + K",
+        tags: ["search", "find", "検索"],
+        prefixes: ["/"],
       },
       {
-        id: 'export-json',
-        label: '/export JSONエクスポート',
-        description: 'ワークスペースをJSON出力します',
-        tags: ['export', 'json', 'backup', '出力'],
-        prefixes: ['/'],
+        id: "export-json",
+        label: "/export JSONエクスポート",
+        description: "ワークスペースをJSON出力します",
+        tags: ["export", "json", "backup", "出力"],
+        prefixes: ["/"],
       },
       {
-        id: 'import-json',
-        label: '/import JSONインポート',
-        description: 'JSONファイルを読み込みます',
-        tags: ['import', 'json', '読み込み'],
-        prefixes: ['/'],
+        id: "import-json",
+        label: "/import JSONインポート",
+        description: "JSONファイルを読み込みます",
+        tags: ["import", "json", "読み込み"],
+        prefixes: ["/"],
       },
       {
-        id: 'toggle-trash-view',
-        label: '/trash ごみ箱表示切替',
-        description: '通常表示とごみ箱表示を切り替えます',
-        tags: ['trash', 'view', 'ごみ箱', '表示'],
-        prefixes: ['/'],
+        id: "toggle-trash-view",
+        label: "/trash ごみ箱表示切替",
+        description: "通常表示とごみ箱表示を切り替えます",
+        tags: ["trash", "view", "ごみ箱", "表示"],
+        prefixes: ["/"],
       },
       {
-        id: 'open-help',
-        label: '/help ヘルプを開く',
-        description: 'ショートカットとコマンド一覧を表示します',
-        shortcut: 'Ctrl/Cmd + /',
-        tags: ['help', 'shortcut', 'コマンド', 'ヘルプ'],
-        prefixes: ['/'],
+        id: "open-help",
+        label: "/help ヘルプを開く",
+        description: "ショートカットとコマンド一覧を表示します",
+        shortcut: "Ctrl/Cmd + /",
+        tags: ["help", "shortcut", "コマンド", "ヘルプ"],
+        prefixes: ["/"],
       },
-    ]
-  }, [selectedPage])
+    ];
+  }, [selectedPage]);
 
   const filteredCommands = useMemo(() => {
-    const query = commandQuery.trim().toLowerCase()
-    const prefix = query.startsWith('@') ? '@' : query.startsWith('/') ? '/' : null
-    const normalized = query.replace(/^[@/]/, '')
+    const query = commandQuery.trim().toLowerCase();
+    const prefix = query.startsWith("@")
+      ? "@"
+      : query.startsWith("/")
+        ? "/"
+        : null;
+    const normalized = query.replace(/^[@/]/, "");
 
     return commandActions.filter((action) => {
       if (action.disabled) {
-        return false
+        return false;
       }
 
       if (prefix && action.prefixes && !action.prefixes.includes(prefix)) {
-        return false
+        return false;
       }
 
       if (!normalized) {
-        return true
+        return true;
       }
 
-      return action.tags.some((tag) => tag.includes(normalized))
-        || action.label.toLowerCase().includes(normalized)
-        || action.description.toLowerCase().includes(normalized)
-    })
-  }, [commandActions, commandQuery])
+      return (
+        action.tags.some((tag) => tag.includes(normalized)) ||
+        action.label.toLowerCase().includes(normalized) ||
+        action.description.toLowerCase().includes(normalized)
+      );
+    });
+  }, [commandActions, commandQuery]);
 
-  const executeCommand = useCallback((command: CommandAction) => {
-    switch (command.id) {
-      case 'create-root':
-        addPage(null)
-        break
-      case 'create-child':
-        if (selectedPage && !selectedPage.isTrashed) {
-          addPage(selectedPage.id)
-        }
-        break
-      case 'rename-page':
-        if (selectedPage && !selectedPage.isTrashed) {
-          renamePage(selectedPage.id)
-        }
-        break
-      case 'toggle-pin':
-        if (selectedPage && !selectedPage.isTrashed) {
-          togglePin(selectedPage.id)
-        }
-        break
-      case 'move-trash':
-        if (selectedPage && !selectedPage.isTrashed) {
-          movePageToTrash(selectedPage.id)
-        }
-        break
-      case 'focus-search':
-        searchInputRef.current?.focus()
-        break
-      case 'export-json':
-        downloadJson(workspace)
-        break
-      case 'import-json':
-        importInputRef.current?.click()
-        break
-      case 'toggle-trash-view':
-        setShowTrash((previous) => !previous)
-        break
-      case 'open-help':
-        openHelpWindow()
-        break
-      default:
-        break
-    }
-    setIsCommandPaletteOpen(false)
-    setCommandQuery('')
-  }, [addPage, movePageToTrash, openHelpWindow, renamePage, selectedPage, togglePin, workspace])
+  const executeCommand = useCallback(
+    (command: CommandAction) => {
+      switch (command.id) {
+        case "create-root":
+          addPage(null);
+          break;
+        case "create-child":
+          if (selectedPage && !selectedPage.isTrashed) {
+            addPage(selectedPage.id);
+          }
+          break;
+        case "rename-page":
+          if (selectedPage && !selectedPage.isTrashed) {
+            renamePage(selectedPage.id);
+          }
+          break;
+        case "toggle-pin":
+          if (selectedPage && !selectedPage.isTrashed) {
+            togglePin(selectedPage.id);
+          }
+          break;
+        case "move-trash":
+          if (selectedPage && !selectedPage.isTrashed) {
+            movePageToTrash(selectedPage.id);
+          }
+          break;
+        case "focus-search":
+          searchInputRef.current?.focus();
+          break;
+        case "export-json":
+          downloadJson(workspace);
+          break;
+        case "import-json":
+          importInputRef.current?.click();
+          break;
+        case "toggle-trash-view":
+          setShowTrash((previous) => !previous);
+          break;
+        case "open-help":
+          openHelpWindow();
+          break;
+        default:
+          break;
+      }
+      setIsCommandPaletteOpen(false);
+      setCommandQuery("");
+    },
+    [
+      addPage,
+      movePageToTrash,
+      openHelpWindow,
+      renamePage,
+      selectedPage,
+      togglePin,
+      workspace,
+    ],
+  );
 
   const copySyncTemplate = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(googleSyncTemplate)
-      setSyncGuideCopyMessage('GASコードをコピーしました。')
+      await navigator.clipboard.writeText(googleSyncTemplate);
+      setSyncGuideCopyMessage("GASコードをコピーしました。");
     } catch {
-      setSyncGuideCopyMessage('コピーに失敗しました。手動でコピーしてください。')
+      setSyncGuideCopyMessage(
+        "コピーに失敗しました。手動でコピーしてください。",
+      );
     }
-  }, [])
+  }, []);
 
   const closeSyncGuide = useCallback(() => {
-    setIsSyncGuideOpen(false)
-    setSyncGuideCopyMessage(null)
-  }, [])
+    setIsSyncGuideOpen(false);
+    setSyncGuideCopyMessage(null);
+  }, []);
 
   useEffect(() => {
     if (!syncGuideCopyMessage) {
-      return
+      return;
     }
     const timerId = window.setTimeout(() => {
-      setSyncGuideCopyMessage(null)
-    }, 4000)
+      setSyncGuideCopyMessage(null);
+    }, 4000);
     return () => {
-      window.clearTimeout(timerId)
-    }
-  }, [syncGuideCopyMessage])
+      window.clearTimeout(timerId);
+    };
+  }, [syncGuideCopyMessage]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setContextMenu(null)
-        setIsHelpOpen(false)
-        setIsCommandPaletteOpen(false)
-        setIsSidebarToolsOpen(false)
-        closeSyncGuide()
-        return
+      if (event.key === "Escape") {
+        setContextMenu(null);
+        setIsHelpOpen(false);
+        setIsCommandPaletteOpen(false);
+        setIsSidebarToolsOpen(false);
+        closeSyncGuide();
+        return;
       }
 
-      if (isCommandPaletteOpen || isHelpOpen || isSyncGuideOpen || isSidebarToolsOpen) {
-        return
+      if (
+        isCommandPaletteOpen ||
+        isHelpOpen ||
+        isSyncGuideOpen ||
+        isSidebarToolsOpen
+      ) {
+        return;
       }
 
       if (!event.ctrlKey && !event.metaKey) {
-        if ((event.key === '/' || event.key === '@') && !isEditableElement(event.target)) {
-          event.preventDefault()
-          openCommandPalette(event.key)
+        if (
+          (event.key === "/" || event.key === "@") &&
+          !isEditableElement(event.target)
+        ) {
+          event.preventDefault();
+          openCommandPalette(event.key);
         }
-        return
+        return;
       }
 
-      const withMeta = event.ctrlKey || event.metaKey
+      const withMeta = event.ctrlKey || event.metaKey;
       if (!withMeta) {
-        return
+        return;
       }
 
-      const key = event.key.toLowerCase()
-      const targetIsEditable = isEditableElement(event.target)
-      if (key === 'k') {
-        event.preventDefault()
-        searchInputRef.current?.focus()
-        return
+      const key = event.key.toLowerCase();
+      const targetIsEditable = isEditableElement(event.target);
+      if (key === "k") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
       }
 
-      if (!targetIsEditable && event.shiftKey && key === 'p' && selectedPage && !selectedPage.isTrashed) {
-        event.preventDefault()
-        togglePin(selectedPage.id)
-        return
+      if (
+        !targetIsEditable &&
+        event.shiftKey &&
+        key === "p" &&
+        selectedPage &&
+        !selectedPage.isTrashed
+      ) {
+        event.preventDefault();
+        togglePin(selectedPage.id);
+        return;
       }
 
-      if (!targetIsEditable && !event.shiftKey && key === 'p') {
-        event.preventDefault()
-        openCommandPalette()
-        return
+      if (!targetIsEditable && !event.shiftKey && key === "p") {
+        event.preventDefault();
+        openCommandPalette();
+        return;
       }
 
-      if (key === '/' || key === '?') {
-        event.preventDefault()
-        setIsHelpOpen((previous) => !previous)
-        return
+      if (key === "/" || key === "?") {
+        event.preventDefault();
+        setIsHelpOpen((previous) => !previous);
+        return;
       }
 
-      if (event.shiftKey && key === 'n') {
-        event.preventDefault()
-        addPage(null)
-        return
+      if (event.shiftKey && key === "n") {
+        event.preventDefault();
+        addPage(null);
+        return;
       }
 
-      if (!targetIsEditable && key === 'n' && selectedPage && !selectedPage.isTrashed) {
-        event.preventDefault()
-        addPage(selectedPage.id)
-        return
+      if (
+        !targetIsEditable &&
+        key === "n" &&
+        selectedPage &&
+        !selectedPage.isTrashed
+      ) {
+        event.preventDefault();
+        addPage(selectedPage.id);
+        return;
       }
 
-      if (!targetIsEditable && key === 'r' && selectedPage && !selectedPage.isTrashed) {
-        event.preventDefault()
-        renamePage(selectedPage.id)
-        return
+      if (
+        !targetIsEditable &&
+        key === "r" &&
+        selectedPage &&
+        !selectedPage.isTrashed
+      ) {
+        event.preventDefault();
+        renamePage(selectedPage.id);
+        return;
       }
 
-      if (!targetIsEditable && (key === 'backspace' || key === 'delete') && selectedPage && !selectedPage.isTrashed) {
-        event.preventDefault()
-        movePageToTrash(selectedPage.id)
+      if (
+        !targetIsEditable &&
+        (key === "backspace" || key === "delete") &&
+        selectedPage &&
+        !selectedPage.isTrashed
+      ) {
+        event.preventDefault();
+        movePageToTrash(selectedPage.id);
       }
-    }
+    };
 
-    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener("keydown", onKeyDown);
     return () => {
-      window.removeEventListener('keydown', onKeyDown)
-    }
-  }, [addPage, closeSyncGuide, isCommandPaletteOpen, isHelpOpen, isSidebarToolsOpen, isSyncGuideOpen, movePageToTrash, openCommandPalette, renamePage, selectedPage, togglePin])
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [
+    addPage,
+    closeSyncGuide,
+    isCommandPaletteOpen,
+    isHelpOpen,
+    isSidebarToolsOpen,
+    isSyncGuideOpen,
+    movePageToTrash,
+    openCommandPalette,
+    renamePage,
+    selectedPage,
+    togglePin,
+  ]);
 
   useEffect(() => {
     if (!isSidebarResizing || isSidebarCollapsed) {
-      return
+      return;
     }
 
     const onMouseMove = (event: MouseEvent) => {
-      const sidebarLeft = sidebarRef.current?.getBoundingClientRect().left ?? 0
-      setSidebarWidth(clampSidebarWidth(event.clientX - sidebarLeft))
-    }
+      const sidebarLeft = sidebarRef.current?.getBoundingClientRect().left ?? 0;
+      setSidebarWidth(clampSidebarWidth(event.clientX - sidebarLeft));
+    };
     const onMouseUp = () => {
-      setIsSidebarResizing(false)
-    }
+      setIsSidebarResizing(false);
+    };
 
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
 
     return () => {
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
-    }
-  }, [isSidebarCollapsed, isSidebarResizing])
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [isSidebarCollapsed, isSidebarResizing]);
 
   const nonTrashedRootPageIds = useMemo(
-    () => workspace.rootPageIds.filter((rootId) => {
-      const page = workspace.pages[rootId]
-      return page && !page.isTrashed
-    }),
+    () =>
+      workspace.rootPageIds.filter((rootId) => {
+        const page = workspace.pages[rootId];
+        return page && !page.isTrashed;
+      }),
     [workspace.pages, workspace.rootPageIds],
-  )
+  );
 
   const pinnedPages = useMemo(
-    () => Object.values(workspace.pages)
-      .filter((page) => page.isPinned && !page.isTrashed)
-      .sort((a, b) => b.updatedAt - a.updatedAt),
+    () =>
+      Object.values(workspace.pages)
+        .filter((page) => page.isPinned && !page.isTrashed)
+        .sort((a, b) => b.updatedAt - a.updatedAt),
     [workspace.pages],
-  )
+  );
 
   const trashedPages = useMemo(
-    () => Object.values(workspace.pages)
-      .filter((page) => page.isTrashed)
-      .sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0)),
+    () =>
+      Object.values(workspace.pages)
+        .filter((page) => page.isTrashed)
+        .sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0)),
     [workspace.pages],
-  )
+  );
 
   const searchableTextByPageId = useMemo(
-    () => Object.fromEntries(
-      Object.values(workspace.pages).map((page) => [page.id, `${page.title} ${contentToText(page.content)}`.toLowerCase()]),
-    ),
+    () =>
+      Object.fromEntries(
+        Object.values(workspace.pages).map((page) => [
+          page.id,
+          `${page.title} ${contentToText(page.content)}`.toLowerCase(),
+        ]),
+      ),
     [workspace.pages],
-  )
+  );
 
   const searchResults = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase()
+    const q = searchQuery.trim().toLowerCase();
     if (!q) {
-      return []
+      return [];
     }
 
     return Object.values(workspace.pages)
       .filter((page) => {
         if (page.isTrashed) {
-          return false
+          return false;
         }
 
-        const searchable = searchableTextByPageId[page.id] ?? ''
-        return searchable.includes(q)
+        const searchable = searchableTextByPageId[page.id] ?? "";
+        return searchable.includes(q);
       })
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, MAX_SEARCH_RESULTS)
-  }, [searchQuery, searchableTextByPageId, workspace.pages])
+      .slice(0, MAX_SEARCH_RESULTS);
+  }, [searchQuery, searchableTextByPageId, workspace.pages]);
 
-  const activePage = selectedPage
-  const displayedPage = activePage && (showTrash ? activePage.isTrashed : !activePage.isTrashed) ? activePage : null
-  const syncConfigured = isSyncConfigured(syncSettings)
-  const lastSyncLabel = lastSyncAt ? formatDateTime(lastSyncAt) : '未実行'
-  const selectedPageIdSet = useMemo(() => new Set(selectedPageIds), [selectedPageIds])
+  const activePage = selectedPage;
+  const displayedPage =
+    activePage && (showTrash ? activePage.isTrashed : !activePage.isTrashed)
+      ? activePage
+      : null;
+  const syncConfigured = isSyncConfigured(syncSettings);
+  const lastSyncLabel = lastSyncAt ? formatDateTime(lastSyncAt) : "未実行";
+  const selectedPageIdSet = useMemo(
+    () => new Set(selectedPageIds),
+    [selectedPageIds],
+  );
   const selectedVisiblePageIds = useMemo(
-    () => selectedPageIds.filter((pageId) => {
-      const page = workspace.pages[pageId]
-      return page && page.isTrashed === showTrash
-    }),
+    () =>
+      selectedPageIds.filter((pageId) => {
+        const page = workspace.pages[pageId];
+        return page && page.isTrashed === showTrash;
+      }),
     [selectedPageIds, showTrash, workspace.pages],
-  )
+  );
 
   const togglePageSelection = useCallback((pageId: PageId) => {
-    setSelectedPageIds((previous) => (
+    setSelectedPageIds((previous) =>
       previous.includes(pageId)
         ? previous.filter((id) => id !== pageId)
-        : [...previous, pageId]
-    ))
-  }, [])
+        : [...previous, pageId],
+    );
+  }, []);
 
   const selectSinglePage = useCallback((pageId: PageId) => {
-    setSelectedPageIds([pageId])
-  }, [])
+    setSelectedPageIds([pageId]);
+  }, []);
 
-  const handlePageClick = useCallback((event: ReactMouseEvent<HTMLElement>, pageId: PageId, openTrash: boolean) => {
-    if (event.metaKey || event.ctrlKey) {
-      togglePageSelection(pageId)
-    } else {
-      selectSinglePage(pageId)
-    }
-    setShowTrash(openTrash)
-    setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: pageId }))
-  }, [selectSinglePage, togglePageSelection])
+  const handlePageClick = useCallback(
+    (
+      event: ReactMouseEvent<HTMLElement>,
+      pageId: PageId,
+      openTrash: boolean,
+    ) => {
+      if (event.metaKey || event.ctrlKey) {
+        togglePageSelection(pageId);
+      } else {
+        selectSinglePage(pageId);
+      }
+      setShowTrash(openTrash);
+      setWorkspace((previousWorkspace) => ({
+        ...previousWorkspace,
+        selectedPageId: pageId,
+      }));
+    },
+    [selectSinglePage, togglePageSelection],
+  );
 
   const togglePageCollapsed = useCallback((pageId: PageId) => {
-    setCollapsedPageIds((previous) => (
+    setCollapsedPageIds((previous) =>
       previous.includes(pageId)
         ? previous.filter((id) => id !== pageId)
-        : [...previous, pageId]
-    ))
-  }, [])
+        : [...previous, pageId],
+    );
+  }, []);
 
   const collapseAllTreeNodes = useCallback(() => {
     const ids = Object.values(workspace.pages)
-      .filter((page) => !page.isTrashed && page.childrenIds.some((childId) => {
-        const child = workspace.pages[childId]
-        return Boolean(child && !child.isTrashed)
-      }))
-      .map((page) => page.id)
-    setCollapsedPageIds(ids)
-    setContextMenu(null)
-  }, [workspace.pages])
+      .filter(
+        (page) =>
+          !page.isTrashed &&
+          page.childrenIds.some((childId) => {
+            const child = workspace.pages[childId];
+            return Boolean(child && !child.isTrashed);
+          }),
+      )
+      .map((page) => page.id);
+    setCollapsedPageIds(ids);
+    setContextMenu(null);
+  }, [workspace.pages]);
 
   const expandAllTreeNodes = useCallback(() => {
-    setCollapsedPageIds([])
-    setContextMenu(null)
-  }, [])
+    setCollapsedPageIds([]);
+    setContextMenu(null);
+  }, []);
 
-  const reorderPageWithinSiblings = useCallback((draggedId: PageId, targetId: PageId) => {
-    if (draggedId === targetId) {
-      return
-    }
-
-    setWorkspace((previousWorkspace) => {
-      const dragged = previousWorkspace.pages[draggedId]
-      const target = previousWorkspace.pages[targetId]
-      if (!dragged || !target || dragged.isTrashed || target.isTrashed || dragged.parentId !== target.parentId) {
-        return previousWorkspace
+  const reorderPageWithinSiblings = useCallback(
+    (draggedId: PageId, targetId: PageId) => {
+      if (draggedId === targetId) {
+        return;
       }
 
-      const siblings = dragged.parentId
-        ? previousWorkspace.pages[dragged.parentId]?.childrenIds
-        : previousWorkspace.rootPageIds
-      if (!siblings || !siblings.includes(draggedId) || !siblings.includes(targetId)) {
-        return previousWorkspace
-      }
-
-      const draggedIndex = siblings.indexOf(draggedId)
-      const reordered = siblings.filter((id) => id !== draggedId)
-      const targetIndex = reordered.indexOf(targetId)
-      const insertIndex = draggedIndex < siblings.indexOf(targetId) ? targetIndex + 1 : targetIndex
-      reordered.splice(insertIndex, 0, draggedId)
-
-      if (dragged.parentId) {
-        const parent = previousWorkspace.pages[dragged.parentId]
-        if (!parent) {
-          return previousWorkspace
+      setWorkspace((previousWorkspace) => {
+        const dragged = previousWorkspace.pages[draggedId];
+        const target = previousWorkspace.pages[targetId];
+        if (
+          !dragged ||
+          !target ||
+          dragged.isTrashed ||
+          target.isTrashed ||
+          dragged.parentId !== target.parentId
+        ) {
+          return previousWorkspace;
         }
+
+        const siblings = dragged.parentId
+          ? previousWorkspace.pages[dragged.parentId]?.childrenIds
+          : previousWorkspace.rootPageIds;
+        if (
+          !siblings ||
+          !siblings.includes(draggedId) ||
+          !siblings.includes(targetId)
+        ) {
+          return previousWorkspace;
+        }
+
+        const draggedIndex = siblings.indexOf(draggedId);
+        const reordered = siblings.filter((id) => id !== draggedId);
+        const targetIndex = reordered.indexOf(targetId);
+        const insertIndex =
+          draggedIndex < siblings.indexOf(targetId)
+            ? targetIndex + 1
+            : targetIndex;
+        reordered.splice(insertIndex, 0, draggedId);
+
+        if (dragged.parentId) {
+          const parent = previousWorkspace.pages[dragged.parentId];
+          if (!parent) {
+            return previousWorkspace;
+          }
+          return {
+            ...previousWorkspace,
+            pages: {
+              ...previousWorkspace.pages,
+              [parent.id]: {
+                ...parent,
+                childrenIds: reordered,
+                updatedAt: Date.now(),
+              },
+            },
+          };
+        }
+
         return {
           ...previousWorkspace,
-          pages: {
-            ...previousWorkspace.pages,
-            [parent.id]: {
-              ...parent,
-              childrenIds: reordered,
-              updatedAt: Date.now(),
-            },
-          },
-        }
-      }
-
-      return {
-        ...previousWorkspace,
-        rootPageIds: reordered,
-      }
-    })
-  }, [])
+          rootPageIds: reordered,
+        };
+      });
+    },
+    [],
+  );
 
   const bulkMoveSelectedToTrash = useCallback(() => {
-    const targetId = selectedVisiblePageIds[0]
+    const targetId = selectedVisiblePageIds[0];
     if (!targetId) {
-      return
+      return;
     }
-    movePageToTrash(targetId)
-  }, [movePageToTrash, selectedVisiblePageIds])
+    movePageToTrash(targetId);
+  }, [movePageToTrash, selectedVisiblePageIds]);
 
   const bulkRestoreSelected = useCallback(() => {
-    const targetId = selectedVisiblePageIds[0]
+    const targetId = selectedVisiblePageIds[0];
     if (!targetId) {
-      return
+      return;
     }
-    restorePage(targetId)
-  }, [restorePage, selectedVisiblePageIds])
+    restorePage(targetId);
+  }, [restorePage, selectedVisiblePageIds]);
 
   const bulkPermanentlyDeleteSelected = useCallback(() => {
-    const targetId = selectedVisiblePageIds[0]
+    const targetId = selectedVisiblePageIds[0];
     if (!targetId) {
-      return
+      return;
     }
-    permanentlyDeletePage(targetId)
-  }, [permanentlyDeletePage, selectedVisiblePageIds])
+    permanentlyDeletePage(targetId);
+  }, [permanentlyDeletePage, selectedVisiblePageIds]);
 
-  const openContextMenu = useCallback((event: { clientX: number; clientY: number; preventDefault: () => void }, target: ContextMenuTarget) => {
-    event.preventDefault()
-    setContextMenu({
-      target,
-      x: event.clientX,
-      y: event.clientY,
-    })
-  }, [])
+  const openContextMenu = useCallback(
+    (
+      event: { clientX: number; clientY: number; preventDefault: () => void },
+      target: ContextMenuTarget,
+    ) => {
+      event.preventDefault();
+      setContextMenu({
+        target,
+        x: event.clientX,
+        y: event.clientY,
+      });
+    },
+    [],
+  );
 
-  const openPageContextMenu = useCallback((event: { clientX: number; clientY: number; preventDefault: () => void }, pageId: PageId) => {
-    setSelectedPageIds((previous) => (previous.includes(pageId) ? previous : [pageId]))
-    openContextMenu(event, { kind: 'page', pageId })
-  }, [openContextMenu])
+  const openPageContextMenu = useCallback(
+    (
+      event: { clientX: number; clientY: number; preventDefault: () => void },
+      pageId: PageId,
+    ) => {
+      setSelectedPageIds((previous) =>
+        previous.includes(pageId) ? previous : [pageId],
+      );
+      openContextMenu(event, { kind: "page", pageId });
+    },
+    [openContextMenu],
+  );
 
-  const startSidebarResize = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    setIsSidebarResizing(true)
-  }, [])
+  const startSidebarResize = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      setIsSidebarResizing(true);
+    },
+    [],
+  );
 
-  const onSidebarResizeHandleKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
-      return
-    }
+  const onSidebarResizeHandleKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+        return;
+      }
 
-    event.preventDefault()
-    const delta = event.key === 'ArrowLeft' ? -16 : 16
-    setSidebarWidth((previousWidth) => clampSidebarWidth(previousWidth + delta))
-  }, [])
+      event.preventDefault();
+      const delta = event.key === "ArrowLeft" ? -16 : 16;
+      setSidebarWidth((previousWidth) =>
+        clampSidebarWidth(previousWidth + delta),
+      );
+    },
+    [],
+  );
 
-  const pageMenuTarget = contextMenu?.target.kind === 'page' ? contextMenu.target : null
-  const editorMenuTarget = contextMenu?.target.kind === 'editor' ? contextMenu.target : null
-  const editorMenuPageId = editorMenuTarget?.pageId ?? null
-  const pageContextPage = pageMenuTarget ? workspace.pages[pageMenuTarget.pageId] : null
-  const editorContextPage = editorMenuPageId ? workspace.pages[editorMenuPageId] : null
+  const pageMenuTarget =
+    contextMenu?.target.kind === "page" ? contextMenu.target : null;
+  const editorMenuTarget =
+    contextMenu?.target.kind === "editor" ? contextMenu.target : null;
+  const editorMenuPageId = editorMenuTarget?.pageId ?? null;
+  const pageContextPage = pageMenuTarget
+    ? workspace.pages[pageMenuTarget.pageId]
+    : null;
+  const editorContextPage = editorMenuPageId
+    ? workspace.pages[editorMenuPageId]
+    : null;
 
   function renderPageTree(pageIds: PageId[], depth = 0): ReactNode {
     return pageIds.map((pageId) => {
-      const page = workspace.pages[pageId]
+      const page = workspace.pages[pageId];
       if (!page || page.isTrashed) {
-        return null
+        return null;
       }
 
       const visibleChildren = page.childrenIds.filter((childId) => {
-        const child = workspace.pages[childId]
-        return child && !child.isTrashed
-      })
-      const hasChildren = visibleChildren.length > 0
-      const isCollapsed = collapsedPageIds.includes(pageId)
-      const isSelected = selectedPageIdSet.has(pageId)
+        const child = workspace.pages[childId];
+        return child && !child.isTrashed;
+      });
+      const hasChildren = visibleChildren.length > 0;
+      const isCollapsed = collapsedPageIds.includes(pageId);
+      const isSelected = selectedPageIdSet.has(pageId);
 
       return (
         <li key={pageId}>
           <div
-            className={`page-item${workspace.selectedPageId === pageId && !showTrash ? ' active' : ''}${isSelected ? ' selected' : ''}${draggingPageId === pageId ? ' dragging' : ''}`}
+            className={`page-item${workspace.selectedPageId === pageId && !showTrash ? " active" : ""}${isSelected ? " selected" : ""}${draggingPageId === pageId ? " dragging" : ""}`}
             style={{ paddingInlineStart: `${depth * 16 + 8}px` }}
             onClick={(event) => handlePageClick(event, pageId, false)}
             onContextMenu={(event) => {
-              openPageContextMenu(event, pageId)
+              openPageContextMenu(event, pageId);
             }}
             draggable
             onDragStart={(event: ReactDragEvent<HTMLDivElement>) => {
-              event.dataTransfer.effectAllowed = 'move'
-              setDraggingPageId(pageId)
+              event.dataTransfer.effectAllowed = "move";
+              setDraggingPageId(pageId);
             }}
             onDragOver={(event: ReactDragEvent<HTMLDivElement>) => {
               if (draggingPageId && draggingPageId !== pageId) {
-                event.preventDefault()
+                event.preventDefault();
               }
             }}
             onDrop={(event: ReactDragEvent<HTMLDivElement>) => {
-              event.preventDefault()
+              event.preventDefault();
               if (draggingPageId) {
-                reorderPageWithinSiblings(draggingPageId, pageId)
+                reorderPageWithinSiblings(draggingPageId, pageId);
               }
-              setDraggingPageId(null)
+              setDraggingPageId(null);
             }}
             onDragEnd={() => setDraggingPageId(null)}
             role="button"
             tabIndex={0}
             onKeyDown={(event: ReactKeyboardEvent<HTMLDivElement>) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
                 if (event.metaKey || event.ctrlKey) {
-                  togglePageSelection(pageId)
+                  togglePageSelection(pageId);
                 } else {
-                  selectSinglePage(pageId)
+                  selectSinglePage(pageId);
                 }
-                setShowTrash(false)
-                setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: pageId }))
+                setShowTrash(false);
+                setWorkspace((previousWorkspace) => ({
+                  ...previousWorkspace,
+                  selectedPageId: pageId,
+                }));
               }
             }}
           >
@@ -1903,14 +2235,19 @@ function App() {
                 type="button"
                 className="tree-toggle"
                 onClick={(event) => {
-                  event.stopPropagation()
-                  togglePageCollapsed(pageId)
+                  event.stopPropagation();
+                  togglePageCollapsed(pageId);
                 }}
-                aria-label={isCollapsed ? '子ページを展開' : '子ページを折りたたむ'}
-                title={isCollapsed ? '子ページを展開' : '子ページを折りたたむ'}
+                aria-label={
+                  isCollapsed ? "子ページを展開" : "子ページを折りたたむ"
+                }
+                title={isCollapsed ? "子ページを展開" : "子ページを折りたたむ"}
                 aria-expanded={!isCollapsed}
               >
-                <span className={`tree-toggle-chevron${isCollapsed ? ' is-collapsed' : ''}`} aria-hidden="true">
+                <span
+                  className={`tree-toggle-chevron${isCollapsed ? " is-collapsed" : ""}`}
+                  aria-hidden="true"
+                >
                   ▾
                 </span>
               </button>
@@ -1925,43 +2262,50 @@ function App() {
               onClick={(event) => event.stopPropagation()}
               onChange={() => togglePageSelection(pageId)}
             />
-            <span className="page-title">{page.isPinned ? '📌 ' : ''}{page.title}</span>
+            <span className="page-title">
+              {page.isPinned ? "📌 " : ""}
+              {page.title}
+            </span>
             <button
               type="button"
               className="inline-add"
               onClick={(event) => {
-                event.stopPropagation()
-                addPage(page.id)
+                event.stopPropagation();
+                addPage(page.id);
               }}
             >
               +
             </button>
           </div>
-          {hasChildren && !isCollapsed ? <ul>{renderPageTree(visibleChildren, depth + 1)}</ul> : null}
+          {hasChildren && !isCollapsed ? (
+            <ul>{renderPageTree(visibleChildren, depth + 1)}</ul>
+          ) : null}
         </li>
-      )
-    })
+      );
+    });
   }
 
   if (!isLoaded) {
-    return <div className="loading">読み込み中...</div>
+    return <div className="loading">読み込み中...</div>;
   }
 
   return (
     <MantineProvider>
       <div
-        className={`app-layout${isSidebarCollapsed ? ' sidebar-collapsed' : ''}${isSidebarResizing ? ' sidebar-resizing' : ''}`}
-        style={{ gridTemplateColumns: `${isSidebarCollapsed ? 56 : sidebarWidth}px 1fr` }}
+        className={`app-layout${isSidebarCollapsed ? " sidebar-collapsed" : ""}${isSidebarResizing ? " sidebar-resizing" : ""}`}
+        style={{
+          gridTemplateColumns: `${isSidebarCollapsed ? 56 : sidebarWidth}px 1fr`,
+        }}
       >
         <aside
           ref={sidebarRef}
-          className={`sidebar${isSidebarCollapsed ? ' collapsed' : ''}`}
+          className={`sidebar${isSidebarCollapsed ? " collapsed" : ""}`}
           onContextMenu={(event) => {
-            const target = event.target as HTMLElement
-            if (target.closest('.page-item, .list-item, input, button')) {
-              return
+            const target = event.target as HTMLElement;
+            if (target.closest(".page-item, .list-item, input, button")) {
+              return;
             }
-            openContextMenu(event, { kind: 'sidebar' })
+            openContextMenu(event, { kind: "sidebar" });
           }}
         >
           <div className="sidebar-collapse-toggle">
@@ -1969,10 +2313,17 @@ function App() {
               type="button"
               className="sidebar-toggle-button"
               onClick={() => setIsSidebarCollapsed((previous) => !previous)}
-              aria-label={isSidebarCollapsed ? 'サイドバーを展開' : 'サイドバーを折り畳み'}
-              title={isSidebarCollapsed ? 'サイドバーを展開' : 'サイドバーを折り畳み'}
+              aria-label={
+                isSidebarCollapsed ? "サイドバーを展開" : "サイドバーを折り畳み"
+              }
+              title={
+                isSidebarCollapsed ? "サイドバーを展開" : "サイドバーを折り畳み"
+              }
             >
-              <span className={`sidebar-toggle-chevron${isSidebarCollapsed ? ' is-collapsed' : ''}`} aria-hidden="true">
+              <span
+                className={`sidebar-toggle-chevron${isSidebarCollapsed ? " is-collapsed" : ""}`}
+                aria-hidden="true"
+              >
                 ▾
               </span>
               <span className="sidebar-toggle-label">サイドバー</span>
@@ -1986,7 +2337,7 @@ function App() {
             accept="application/json"
             aria-label="JSONファイルをインポート"
             onChange={(event) => {
-              void importJson(event)
+              void importJson(event);
             }}
           />
 
@@ -1998,263 +2349,372 @@ function App() {
                   ルートページ追加
                 </button>
               </div>
-                            <div className="search-box">
-            <input
-              ref={searchInputRef}
-              type="search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="検索（タイトル＋本文）"
-            />
+              <div className="search-box">
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="検索（タイトル＋本文）"
+                />
               </div>
 
               <div className="view-toggle">
-            <button type="button" className={!showTrash ? 'active' : ''} onClick={() => setShowTrash(false)}>
-              通常表示
-            </button>
-            <button type="button" className={showTrash ? 'active' : ''} onClick={() => setShowTrash(true)}>
-              ごみ箱 ({trashedPages.length})
-            </button>
+                <button
+                  type="button"
+                  className={!showTrash ? "active" : ""}
+                  onClick={() => setShowTrash(false)}
+                >
+                  通常表示
+                </button>
+                <button
+                  type="button"
+                  className={showTrash ? "active" : ""}
+                  onClick={() => setShowTrash(true)}
+                >
+                  ごみ箱 ({trashedPages.length})
+                </button>
               </div>
 
               {searchQuery.trim() ? (
-            <section className="sidebar-section">
-              <h2>検索結果</h2>
-              <ul className="flat-list">
-                {searchResults.length === 0 ? <li className="muted">一致するページがありません</li> : null}
-                {searchResults.map((page) => (
-                  <li key={`search-${page.id}`}>
-                    <button
-                      type="button"
-                      className={`list-item${workspace.selectedPageId === page.id && !showTrash ? ' active' : ''}`}
-                      onClick={(event) => handlePageClick(event, page.id, false)}
-                       onContextMenu={(event) => openPageContextMenu(event, page.id)}
-                    >
-                      {page.isPinned ? '📌 ' : ''}
-                      {page.title}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
+                <section className="sidebar-section">
+                  <h2>検索結果</h2>
+                  <ul className="flat-list">
+                    {searchResults.length === 0 ? (
+                      <li className="muted">一致するページがありません</li>
+                    ) : null}
+                    {searchResults.map((page) => (
+                      <li key={`search-${page.id}`}>
+                        <button
+                          type="button"
+                          className={`list-item${workspace.selectedPageId === page.id && !showTrash ? " active" : ""}`}
+                          onClick={(event) =>
+                            handlePageClick(event, page.id, false)
+                          }
+                          onContextMenu={(event) =>
+                            openPageContextMenu(event, page.id)
+                          }
+                        >
+                          {page.isPinned ? "📌 " : ""}
+                          {page.title}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               ) : null}
 
               {pinnedPages.length > 0 ? (
-            <section className="sidebar-section">
-              <h2>ピン留め</h2>
-              <ul className="flat-list">
-                {pinnedPages.map((page) => (
-                  <li key={`pin-${page.id}`}>
-                    <button
-                      type="button"
-                      className={`list-item${workspace.selectedPageId === page.id && !showTrash ? ' active' : ''}`}
-                      onClick={(event) => handlePageClick(event, page.id, false)}
-                       onContextMenu={(event) => openPageContextMenu(event, page.id)}
-                    >
-                      📌 {page.title}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
+                <section className="sidebar-section">
+                  <h2>ピン留め</h2>
+                  <ul className="flat-list">
+                    {pinnedPages.map((page) => (
+                      <li key={`pin-${page.id}`}>
+                        <button
+                          type="button"
+                          className={`list-item${workspace.selectedPageId === page.id && !showTrash ? " active" : ""}`}
+                          onClick={(event) =>
+                            handlePageClick(event, page.id, false)
+                          }
+                          onContextMenu={(event) =>
+                            openPageContextMenu(event, page.id)
+                          }
+                        >
+                          📌 {page.title}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               ) : null}
 
               {showTrash ? (
-            <section className="sidebar-section">
-              <h2>ごみ箱</h2>
-              <ul className="flat-list">
-                {trashedPages.length === 0 ? <li className="muted">ごみ箱は空です</li> : null}
-                {trashedPages.map((page) => (
-                  <li key={`trash-${page.id}`}>
-                    <div
-                      className={`page-item${workspace.selectedPageId === page.id && showTrash ? ' active' : ''}${selectedPageIdSet.has(page.id) ? ' selected' : ''}`}
-                      onClick={(event) => handlePageClick(event, page.id, true)}
-                      onContextMenu={(event) => openPageContextMenu(event, page.id)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(event: ReactKeyboardEvent<HTMLDivElement>) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault()
-                          selectSinglePage(page.id)
-                          setShowTrash(true)
-                          setWorkspace((previousWorkspace) => ({ ...previousWorkspace, selectedPageId: page.id }))
-                        }
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        className="page-select-checkbox"
-                        checked={selectedPageIdSet.has(page.id)}
-                        aria-label={`${page.title}を選択`}
-                        onClick={(event) => event.stopPropagation()}
-                        onChange={() => togglePageSelection(page.id)}
-                      />
-                      <span className="page-title">🗑️ {page.title}</span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </section>
+                <section className="sidebar-section">
+                  <h2>ごみ箱</h2>
+                  <ul className="flat-list">
+                    {trashedPages.length === 0 ? (
+                      <li className="muted">ごみ箱は空です</li>
+                    ) : null}
+                    {trashedPages.map((page) => (
+                      <li key={`trash-${page.id}`}>
+                        <div
+                          className={`page-item${workspace.selectedPageId === page.id && showTrash ? " active" : ""}${selectedPageIdSet.has(page.id) ? " selected" : ""}`}
+                          onClick={(event) =>
+                            handlePageClick(event, page.id, true)
+                          }
+                          onContextMenu={(event) =>
+                            openPageContextMenu(event, page.id)
+                          }
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(
+                            event: ReactKeyboardEvent<HTMLDivElement>,
+                          ) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              selectSinglePage(page.id);
+                              setShowTrash(true);
+                              setWorkspace((previousWorkspace) => ({
+                                ...previousWorkspace,
+                                selectedPageId: page.id,
+                              }));
+                            }
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            className="page-select-checkbox"
+                            checked={selectedPageIdSet.has(page.id)}
+                            aria-label={`${page.title}を選択`}
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={() => togglePageSelection(page.id)}
+                          />
+                          <span className="page-title">🗑️ {page.title}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               ) : (
-            <section className="sidebar-section">
-              <h2>ページ</h2>
-              <ul className="page-tree">{renderPageTree(nonTrashedRootPageIds)}</ul>
-              <details className="sidebar-accordion">
-                <summary>ツリー操作</summary>
-                <div className="accordion-panel">
-                  <button type="button" onClick={collapseAllTreeNodes}>
-                    すべて折りたたむ
-                  </button>
-                  <button type="button" onClick={expandAllTreeNodes}>
-                    すべて展開
-                  </button>
-                </div>
-              </details>
-            </section>
+                <section className="sidebar-section">
+                  <h2>ページ</h2>
+                  <ul className="page-tree">
+                    {renderPageTree(nonTrashedRootPageIds)}
+                  </ul>
+                  <details className="sidebar-accordion">
+                    <summary>ツリー操作</summary>
+                    <div className="accordion-panel">
+                      <button type="button" onClick={collapseAllTreeNodes}>
+                        すべて折りたたむ
+                      </button>
+                      <button type="button" onClick={expandAllTreeNodes}>
+                        すべて展開
+                      </button>
+                    </div>
+                  </details>
+                </section>
               )}
 
               <section className="sidebar-section selection-tools">
                 <details className="sidebar-accordion">
-                  <summary aria-live="polite" aria-atomic="true">選択中 ({selectedVisiblePageIds.length})</summary>
+                  <summary aria-live="polite" aria-atomic="true">
+                    選択中 ({selectedVisiblePageIds.length})
+                  </summary>
                   <div className="accordion-panel selection-actions">
                     {!showTrash ? (
-                      <button type="button" disabled={selectedVisiblePageIds.length === 0} onClick={bulkMoveSelectedToTrash}>
+                      <button
+                        type="button"
+                        disabled={selectedVisiblePageIds.length === 0}
+                        onClick={bulkMoveSelectedToTrash}
+                      >
                         選択中を一括でごみ箱へ移動
                       </button>
                     ) : (
                       <>
-                        <button type="button" disabled={selectedVisiblePageIds.length === 0} onClick={bulkRestoreSelected}>
+                        <button
+                          type="button"
+                          disabled={selectedVisiblePageIds.length === 0}
+                          onClick={bulkRestoreSelected}
+                        >
                           選択中を一括で復元
                         </button>
-                        <button type="button" className="danger" disabled={selectedVisiblePageIds.length === 0} onClick={bulkPermanentlyDeleteSelected}>
+                        <button
+                          type="button"
+                          className="danger"
+                          disabled={selectedVisiblePageIds.length === 0}
+                          onClick={bulkPermanentlyDeleteSelected}
+                        >
                           選択中を一括で完全削除
                         </button>
                       </>
                     )}
-                    <button type="button" disabled={selectedPageIds.length === 0} onClick={() => setSelectedPageIds([])}>
+                    <button
+                      type="button"
+                      disabled={selectedPageIds.length === 0}
+                      onClick={() => setSelectedPageIds([])}
+                    >
                       選択解除
                     </button>
                   </div>
                 </details>
               </section>
 
-
               <div className="sidebar-actions">
-                <button type="button" onClick={() => setIsSidebarToolsOpen(true)}>
+                <button
+                  type="button"
+                  onClick={() => setIsSidebarToolsOpen(true)}
+                >
                   ツールを開く
                 </button>
               </div>
 
-            <section className="sidebar-section sync-settings">
-              <details
-                className="sidebar-accordion"
-                open={isSyncSettingsOpen}
-                onToggle={(event) => setIsSyncSettingsOpen((event.currentTarget as HTMLDetailsElement).open)}
-              >
-                <summary>Google同期設定</summary>
-                <div className="accordion-panel">
-              <label>
-                GAS WebアプリURL
-                <input
-                  type="url"
-                  value={syncSettings.gasUrl}
-                  onChange={(event) => {
-                    setSyncSettings((prev) => ({ ...prev, gasUrl: event.target.value }))
-                  }}
-                  placeholder="https://script.google.com/macros/s/.../exec"
-                />
-              </label>
-              <label>
-                スプレッドシートURLまたはID
-                <input
-                  type="text"
-                  value={syncSettings.spreadsheetRef}
-                  onChange={(event) => {
-                    setSyncSettings((prev) => ({ ...prev, spreadsheetRef: event.target.value }))
-                  }}
-                  placeholder="https://docs.google.com/spreadsheets/d/... または ID"
-                />
-              </label>
-              <label>
-                同期キー（共有キー）
-                <input
-                  type="text"
-                  value={syncSettings.syncKey}
-                  onChange={(event) => {
-                    setSyncSettings((prev) => ({ ...prev, syncKey: event.target.value }))
-                  }}
-                  placeholder="同じ値を全端末で設定"
-                />
-              </label>
-              <label>
-                端末名（端末ID）
-                <input
-                  type="text"
-                  value={syncSettings.deviceId}
-                  onChange={(event) => {
-                    setSyncSettings((prev) => ({ ...prev, deviceId: event.target.value }))
-                  }}
-                  placeholder="my-laptop"
-                />
-              </label>
-              <p className="muted">
-                {syncConfigured ? '同期設定は有効です。' : '未設定項目があります。既存のローカル保存のみ有効です。'}
-              </p>
-              <div className="sync-guide">
-                <p className="muted">
-                  手順: スプレッドシート作成 → GAS貼付 → Web公開 → この画面にURL設定 → 接続テスト
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setIsSyncGuideOpen(true)}
+              <section className="sidebar-section sync-settings">
+                <details
+                  className="sidebar-accordion"
+                  open={isSyncSettingsOpen}
+                  onToggle={(event) =>
+                    setIsSyncSettingsOpen(
+                      (event.currentTarget as HTMLDetailsElement).open,
+                    )
+                  }
                 >
-                  セットアップ手順とGASコードを表示
-                </button>
-                <p className="muted sync-note">
-                  注意: Google同期機能は任意の機能です。設定・公開範囲・権限の管理は利用者の自己責任で行ってください。
-                </p>
-              </div>
-                </div>
-              </details>
-            </section>
+                  <summary>Google同期設定</summary>
+                  <div className="accordion-panel">
+                    <label>
+                      GAS WebアプリURL
+                      <input
+                        type="url"
+                        value={syncSettings.gasUrl}
+                        onChange={(event) => {
+                          setSyncSettings((prev) => ({
+                            ...prev,
+                            gasUrl: event.target.value,
+                          }));
+                        }}
+                        placeholder="https://script.google.com/macros/s/.../exec"
+                      />
+                    </label>
+                    <label>
+                      スプレッドシートURLまたはID
+                      <input
+                        type="text"
+                        value={syncSettings.spreadsheetRef}
+                        onChange={(event) => {
+                          setSyncSettings((prev) => ({
+                            ...prev,
+                            spreadsheetRef: event.target.value,
+                          }));
+                        }}
+                        placeholder="https://docs.google.com/spreadsheets/d/... または ID"
+                      />
+                    </label>
+                    <label>
+                      同期キー（共有キー）
+                      <input
+                        type="text"
+                        value={syncSettings.syncKey}
+                        onChange={(event) => {
+                          setSyncSettings((prev) => ({
+                            ...prev,
+                            syncKey: event.target.value,
+                          }));
+                        }}
+                        placeholder="同じ値を全端末で設定"
+                      />
+                    </label>
+                    <label>
+                      端末名（端末ID）
+                      <input
+                        type="text"
+                        value={syncSettings.deviceId}
+                        onChange={(event) => {
+                          setSyncSettings((prev) => ({
+                            ...prev,
+                            deviceId: event.target.value,
+                          }));
+                        }}
+                        placeholder="my-laptop"
+                      />
+                    </label>
+                    <p className="muted">
+                      {syncConfigured
+                        ? "同期設定は有効です。"
+                        : "未設定項目があります。既存のローカル保存のみ有効です。"}
+                    </p>
+                    <div className="sync-guide">
+                      <p className="muted">
+                        手順: スプレッドシート作成 → GAS貼付 → Web公開 →
+                        この画面にURL設定 → 接続テスト
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setIsSyncGuideOpen(true)}
+                      >
+                        セットアップ手順とGASコードを表示
+                      </button>
+                      <p className="muted sync-note">
+                        注意:
+                        Google同期機能は任意の機能です。設定・公開範囲・権限の管理は利用者の自己責任で行ってください。
+                      </p>
+                    </div>
+                  </div>
+                </details>
+              </section>
 
               <section className="sidebar-section sync-status-panel">
                 <details className="sidebar-accordion" open>
                   <summary>同期ステータス</summary>
                   <div className="accordion-panel">
-            <p className="muted">{isSyncing ? '同期処理中...' : syncStatus}</p>
-            <p className="muted">最終同期: {lastSyncLabel}</p>
-            {syncError ? <p className="muted sync-error">エラー: {syncError}</p> : null}
-            <div className="sync-actions">
-              <button type="button" disabled={!syncConfigured || isSyncing} onClick={() => void testSyncConnection()}>
-                接続テスト
-              </button>
-              <button type="button" disabled={!syncConfigured || isSyncing} onClick={() => void syncNow()}>
-                今すぐ同期
-              </button>
-              <button type="button" disabled={!syncConfigured || isSyncing} onClick={() => void restoreFromCloud()}>
-                クラウドから復元
-              </button>
-              {needsRetry ? (
-                <button type="button" disabled={!syncConfigured || isSyncing} onClick={() => void syncNow()}>
-                  リトライ
-                </button>
-              ) : null}
-            </div>
+                    <p className="muted">
+                      {isSyncing ? "同期処理中..." : syncStatus}
+                    </p>
+                    <p className="muted">最終同期: {lastSyncLabel}</p>
+                    {syncError ? (
+                      <p className="muted sync-error">エラー: {syncError}</p>
+                    ) : null}
+                    <div className="sync-actions">
+                      <button
+                        type="button"
+                        disabled={!syncConfigured || isSyncing}
+                        onClick={() => void testSyncConnection()}
+                      >
+                        接続テスト
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!syncConfigured || isSyncing}
+                        onClick={() => void syncNow()}
+                      >
+                        今すぐ同期
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!syncConfigured || isSyncing}
+                        onClick={() => void restoreFromCloud()}
+                      >
+                        クラウドから復元
+                      </button>
+                      {needsRetry ? (
+                        <button
+                          type="button"
+                          disabled={!syncConfigured || isSyncing}
+                          onClick={() => void syncNow()}
+                        >
+                          リトライ
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 </details>
               </section>
-
             </>
           ) : (
             <div className="sidebar-icon-actions">
-              <button type="button" className="sidebar-icon-button" onClick={() => addPage(null)} aria-label="ルートページ追加" title="ルートページ追加">
+              <button
+                type="button"
+                className="sidebar-icon-button"
+                onClick={() => addPage(null)}
+                aria-label="ルートページ追加"
+                title="ルートページ追加"
+              >
                 ➕
               </button>
-              <button type="button" className="sidebar-icon-button" onClick={() => setShowTrash((previous) => !previous)} aria-label={showTrash ? '通常表示へ切替' : 'ごみ箱を表示'} title={showTrash ? '通常表示へ切替' : 'ごみ箱を表示'}>
-                {showTrash ? '📄' : '🗑️'}
+              <button
+                type="button"
+                className="sidebar-icon-button"
+                onClick={() => setShowTrash((previous) => !previous)}
+                aria-label={showTrash ? "通常表示へ切替" : "ごみ箱を表示"}
+                title={showTrash ? "通常表示へ切替" : "ごみ箱を表示"}
+              >
+                {showTrash ? "📄" : "🗑️"}
               </button>
-              <button type="button" className="sidebar-icon-button" onClick={() => setIsSidebarToolsOpen(true)} aria-label="ツールを開く" title="ツールを開く">
+              <button
+                type="button"
+                className="sidebar-icon-button"
+                onClick={() => setIsSidebarToolsOpen(true)}
+                aria-label="ツールを開く"
+                title="ツールを開く"
+              >
                 ⋯
               </button>
             </div>
@@ -2278,43 +2738,69 @@ function App() {
         <main
           className="editor-area"
           onContextMenu={(event) => {
-            const target = event.target as HTMLElement
-            if (target.closest('.context-menu, .modal-panel')) {
-              return
+            const target = event.target as HTMLElement;
+            if (target.closest(".context-menu, .modal-panel")) {
+              return;
             }
-            openContextMenu(event, { kind: 'editor', pageId: displayedPage?.id ?? null })
+            openContextMenu(event, {
+              kind: "editor",
+              pageId: displayedPage?.id ?? null,
+            });
           }}
         >
           {displayedPage ? (
             <>
               <header className="editor-header">
                 <h2>
-                  {displayedPage.isPinned ? '📌 ' : ''}
+                  {displayedPage.isPinned ? "📌 " : ""}
                   {displayedPage.title}
                 </h2>
-                <p className="updated-at">最終更新: {formatDateTime(displayedPage.updatedAt)}</p>
-                {displayedPage.isTrashed ? <p className="muted">このページはごみ箱にあります。右クリックメニューから復元できます。</p> : null}
+                <p className="updated-at">
+                  最終更新: {formatDateTime(displayedPage.updatedAt)}
+                </p>
+                {displayedPage.isTrashed ? (
+                  <p className="muted">
+                    このページはごみ箱にあります。右クリックメニューから復元できます。
+                  </p>
+                ) : null}
               </header>
               <Editor
                 key={displayedPage.id}
                 content={displayedPage.content}
-                onContentChange={(content) => onPageContentChange(displayedPage.id, content)}
+                onContentChange={(content) =>
+                  onPageContentChange(displayedPage.id, content)
+                }
               />
             </>
           ) : (
-            <p>{showTrash ? 'ごみ箱からページを選択してください。' : 'ページを作成してください。'}</p>
+            <p>
+              {showTrash
+                ? "ごみ箱からページを選択してください。"
+                : "ページを作成してください。"}
+            </p>
           )}
         </main>
 
         {contextMenu ? (
-          <div className="context-menu" style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}>
+          <div
+            className="context-menu"
+            style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+          >
             {pageMenuTarget && pageContextPage ? (
               pageContextPage.isTrashed ? (
                 <>
-                  <button type="button" onClick={() => togglePageSelection(pageMenuTarget.pageId)}>
-                    {selectedPageIdSet.has(pageMenuTarget.pageId) ? '選択解除' : '選択に追加'}
+                  <button
+                    type="button"
+                    onClick={() => togglePageSelection(pageMenuTarget.pageId)}
+                  >
+                    {selectedPageIdSet.has(pageMenuTarget.pageId)
+                      ? "選択解除"
+                      : "選択に追加"}
                   </button>
-                  <button type="button" onClick={() => restorePage(pageMenuTarget.pageId)}>
+                  <button
+                    type="button"
+                    onClick={() => restorePage(pageMenuTarget.pageId)}
+                  >
                     復元
                   </button>
                   {selectedVisiblePageIds.length > 1 ? (
@@ -2322,58 +2808,100 @@ function App() {
                       選択中をまとめて復元 ({selectedVisiblePageIds.length})
                     </button>
                   ) : null}
-                  <button type="button" className="danger" onClick={() => permanentlyDeletePage(pageMenuTarget.pageId)}>
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => permanentlyDeletePage(pageMenuTarget.pageId)}
+                  >
                     完全削除
                   </button>
                   {selectedVisiblePageIds.length > 1 ? (
-                    <button type="button" className="danger" onClick={bulkPermanentlyDeleteSelected}>
+                    <button
+                      type="button"
+                      className="danger"
+                      onClick={bulkPermanentlyDeleteSelected}
+                    >
                       選択中をまとめて完全削除 ({selectedVisiblePageIds.length})
                     </button>
                   ) : null}
                 </>
               ) : (
                 <>
-                  <button type="button" onClick={() => togglePageSelection(pageMenuTarget.pageId)}>
-                    {selectedPageIdSet.has(pageMenuTarget.pageId) ? '選択解除' : '選択に追加'}
+                  <button
+                    type="button"
+                    onClick={() => togglePageSelection(pageMenuTarget.pageId)}
+                  >
+                    {selectedPageIdSet.has(pageMenuTarget.pageId)
+                      ? "選択解除"
+                      : "選択に追加"}
                   </button>
-                  <button type="button" onClick={() => addPage(pageMenuTarget.pageId)}>
+                  <button
+                    type="button"
+                    onClick={() => addPage(pageMenuTarget.pageId)}
+                  >
                     子ページを作成
                   </button>
-                  <button type="button" onClick={() => renamePage(pageMenuTarget.pageId)}>
+                  <button
+                    type="button"
+                    onClick={() => renamePage(pageMenuTarget.pageId)}
+                  >
                     名前を変更
                   </button>
-                  <button type="button" onClick={() => togglePin(pageMenuTarget.pageId)}>
-                    {pageContextPage.isPinned ? 'ピン留め解除' : 'ピン留め'}
+                  <button
+                    type="button"
+                    onClick={() => togglePin(pageMenuTarget.pageId)}
+                  >
+                    {pageContextPage.isPinned ? "ピン留め解除" : "ピン留め"}
                   </button>
-                  <button type="button" onClick={() => movePageToRoot(pageMenuTarget.pageId)}>
+                  <button
+                    type="button"
+                    onClick={() => movePageToRoot(pageMenuTarget.pageId)}
+                  >
                     ルートへ移動
                   </button>
                   {pageContextPage.childrenIds.length > 0 ? (
-                    <button type="button" onClick={() => togglePageCollapsed(pageMenuTarget.pageId)}>
-                      {collapsedPageIds.includes(pageMenuTarget.pageId) ? '子ページを展開' : '子ページを折りたたむ'}
+                    <button
+                      type="button"
+                      onClick={() => togglePageCollapsed(pageMenuTarget.pageId)}
+                    >
+                      {collapsedPageIds.includes(pageMenuTarget.pageId)
+                        ? "子ページを展開"
+                        : "子ページを折りたたむ"}
                     </button>
                   ) : null}
-                  <button type="button" className="danger" onClick={() => movePageToTrash(pageMenuTarget.pageId)}>
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => movePageToTrash(pageMenuTarget.pageId)}
+                  >
                     ごみ箱へ移動
                   </button>
                   {selectedVisiblePageIds.length > 1 ? (
-                    <button type="button" className="danger" onClick={bulkMoveSelectedToTrash}>
-                      選択中をまとめてごみ箱へ移動 ({selectedVisiblePageIds.length})
+                    <button
+                      type="button"
+                      className="danger"
+                      onClick={bulkMoveSelectedToTrash}
+                    >
+                      選択中をまとめてごみ箱へ移動 (
+                      {selectedVisiblePageIds.length})
                     </button>
                   ) : null}
                 </>
               )
             ) : null}
 
-            {contextMenu.target.kind === 'sidebar' ? (
+            {contextMenu.target.kind === "sidebar" ? (
               <>
                 <button type="button" onClick={() => addPage(null)}>
                   ルートページを作成
                 </button>
-                <button type="button" onClick={() => setShowTrash((previous) => !previous)}>
-                  {showTrash ? '通常表示へ切替' : 'ごみ箱を表示'}
+                <button
+                  type="button"
+                  onClick={() => setShowTrash((previous) => !previous)}
+                >
+                  {showTrash ? "通常表示へ切替" : "ごみ箱を表示"}
                 </button>
-                <button type="button" onClick={() => openCommandPalette('/')}>
+                <button type="button" onClick={() => openCommandPalette("/")}>
                   コマンドを開く
                 </button>
                 <button type="button" onClick={collapseAllTreeNodes}>
@@ -2392,30 +2920,55 @@ function App() {
               editorMenuPageId ? (
                 editorContextPage?.isTrashed ? (
                   <>
-                    <button type="button" onClick={() => restorePage(editorMenuPageId)}>
+                    <button
+                      type="button"
+                      onClick={() => restorePage(editorMenuPageId)}
+                    >
                       復元
                     </button>
-                    <button type="button" className="danger" onClick={() => permanentlyDeletePage(editorMenuPageId)}>
+                    <button
+                      type="button"
+                      className="danger"
+                      onClick={() => permanentlyDeletePage(editorMenuPageId)}
+                    >
                       完全削除
                     </button>
                   </>
                 ) : editorContextPage ? (
                   <>
-                    <button type="button" onClick={() => addPage(editorMenuPageId)}>
+                    <button
+                      type="button"
+                      onClick={() => addPage(editorMenuPageId)}
+                    >
                       子ページを作成
                     </button>
-                    <button type="button" onClick={() => renamePage(editorMenuPageId)}>
+                    <button
+                      type="button"
+                      onClick={() => renamePage(editorMenuPageId)}
+                    >
                       名前を変更
                     </button>
-                    <button type="button" onClick={() => togglePin(editorMenuPageId)}>
-                      {editorContextPage?.isPinned ? 'ピン留め解除' : 'ピン留め'}
+                    <button
+                      type="button"
+                      onClick={() => togglePin(editorMenuPageId)}
+                    >
+                      {editorContextPage?.isPinned
+                        ? "ピン留め解除"
+                        : "ピン留め"}
                     </button>
                     {editorContextPage?.parentId ? (
-                      <button type="button" onClick={() => movePageToRoot(editorContextPage.id)}>
+                      <button
+                        type="button"
+                        onClick={() => movePageToRoot(editorContextPage.id)}
+                      >
                         ルートへ移動
                       </button>
                     ) : null}
-                    <button type="button" className="danger" onClick={() => movePageToTrash(editorMenuPageId)}>
+                    <button
+                      type="button"
+                      className="danger"
+                      onClick={() => movePageToTrash(editorMenuPageId)}
+                    >
                       ごみ箱へ移動
                     </button>
                   </>
@@ -2434,7 +2987,7 @@ function App() {
             className="modal-backdrop"
             role="presentation"
             onClick={() => {
-              setIsCommandPaletteOpen(false)
+              setIsCommandPaletteOpen(false);
             }}
           >
             <div
@@ -2452,17 +3005,22 @@ function App() {
                 placeholder="コマンドを入力（/ か @ で絞り込み）"
                 onChange={(event) => setCommandQuery(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter' && filteredCommands[0]) {
-                    event.preventDefault()
-                    executeCommand(filteredCommands[0])
+                  if (event.key === "Enter" && filteredCommands[0]) {
+                    event.preventDefault();
+                    executeCommand(filteredCommands[0]);
                   }
                 }}
               />
               <ul className="command-list">
-                {filteredCommands.length === 0 ? <li className="muted">一致するコマンドがありません</li> : null}
+                {filteredCommands.length === 0 ? (
+                  <li className="muted">一致するコマンドがありません</li>
+                ) : null}
                 {filteredCommands.map((command) => (
                   <li key={command.id}>
-                    <button type="button" onClick={() => executeCommand(command)}>
+                    <button
+                      type="button"
+                      onClick={() => executeCommand(command)}
+                    >
                       <span>{command.label}</span>
                       {command.shortcut ? <kbd>{command.shortcut}</kbd> : null}
                     </button>
@@ -2479,7 +3037,7 @@ function App() {
             className="modal-backdrop"
             role="presentation"
             onClick={() => {
-              setIsHelpOpen(false)
+              setIsHelpOpen(false);
             }}
           >
             <div
@@ -2489,22 +3047,48 @@ function App() {
               aria-labelledby="help-dialog-title"
               onClick={(event) => event.stopPropagation()}
             >
-              <button type="button" autoFocus onClick={() => setIsHelpOpen(false)}>
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setIsHelpOpen(false)}
+              >
                 閉じる
               </button>
               <h3 id="help-dialog-title">ショートカット / コマンドヘルプ</h3>
               <ul>
-                <li><kbd>Ctrl/Cmd + K</kbd> 検索欄へフォーカス</li>
-                <li><kbd>Ctrl/Cmd + Shift + N</kbd> ルートページ作成</li>
-                <li><kbd>Ctrl/Cmd + N</kbd> 子ページ作成</li>
-                <li><kbd>Ctrl/Cmd + R</kbd> 現在ページの名前変更</li>
-                <li><kbd>Ctrl/Cmd + Shift + P</kbd> ピン留め切替</li>
-                <li><kbd>Ctrl/Cmd + Delete</kbd> 現在ページをごみ箱へ移動</li>
-                <li><kbd>Ctrl/Cmd + P</kbd> コマンドパレットを開く</li>
-                <li><kbd>Ctrl/Cmd + /</kbd> ヘルプを開く</li>
-                <li><kbd>/</kbd> または <kbd>@</kbd> コマンドパレットを接頭辞付きで開く</li>
+                <li>
+                  <kbd>Ctrl/Cmd + K</kbd> 検索欄へフォーカス
+                </li>
+                <li>
+                  <kbd>Ctrl/Cmd + Shift + N</kbd> ルートページ作成
+                </li>
+                <li>
+                  <kbd>Ctrl/Cmd + N</kbd> 子ページ作成
+                </li>
+                <li>
+                  <kbd>Ctrl/Cmd + R</kbd> 現在ページの名前変更
+                </li>
+                <li>
+                  <kbd>Ctrl/Cmd + Shift + P</kbd> ピン留め切替
+                </li>
+                <li>
+                  <kbd>Ctrl/Cmd + Delete</kbd> 現在ページをごみ箱へ移動
+                </li>
+                <li>
+                  <kbd>Ctrl/Cmd + P</kbd> コマンドパレットを開く
+                </li>
+                <li>
+                  <kbd>Ctrl/Cmd + /</kbd> ヘルプを開く
+                </li>
+                <li>
+                  <kbd>/</kbd> または <kbd>@</kbd>{" "}
+                  コマンドパレットを接頭辞付きで開く
+                </li>
               </ul>
-              <p className="muted">例: <code>/new</code>, <code>/help</code>, <code>@rename</code>, <code>@trash</code></p>
+              <p className="muted">
+                例: <code>/new</code>, <code>/help</code>, <code>@rename</code>,{" "}
+                <code>@trash</code>
+              </p>
             </div>
           </div>
         ) : null}
@@ -2522,22 +3106,39 @@ function App() {
               aria-labelledby="sync-guide-dialog-title"
               onClick={(event) => event.stopPropagation()}
             >
-              <button type="button" aria-label="閉じる" onClick={closeSyncGuide}>
+              <button
+                type="button"
+                aria-label="閉じる"
+                onClick={closeSyncGuide}
+              >
                 閉じる
               </button>
               <h3 id="sync-guide-dialog-title">Google同期セットアップガイド</h3>
               <ol>
-                <li>Google スプレッドシートを新規作成し、URLまたはIDを控えます。</li>
-                <li>Google Apps Scriptで新規プロジェクトを作成し、下のコードを貼り付けて保存します。</li>
-                <li>「デプロイ」→「新しいデプロイ」→「ウェブアプリ」で公開し、発行されたURL（.../exec）を控えます。</li>
-                <li>この画面の同期設定にWebアプリURL・スプレッドシートURL/ID・同期キー・端末名を入力します。</li>
+                <li>
+                  Google スプレッドシートを新規作成し、URLまたはIDを控えます。
+                </li>
+                <li>
+                  Google Apps
+                  Scriptで新規プロジェクトを作成し、下のコードを貼り付けて保存します。
+                </li>
+                <li>
+                  「デプロイ」→「新しいデプロイ」→「ウェブアプリ」で公開し、発行されたURL（.../exec）を控えます。
+                </li>
+                <li>
+                  この画面の同期設定にWebアプリURL・スプレッドシートURL/ID・同期キー・端末名を入力します。
+                </li>
                 <li>「接続テスト」→「今すぐ同期」で動作確認します。</li>
               </ol>
               <div className="sync-template-actions">
                 <button type="button" onClick={copySyncTemplate}>
                   GASコードをコピー
                 </button>
-                {syncGuideCopyMessage ? <p className="muted" aria-live="polite">{syncGuideCopyMessage}</p> : null}
+                {syncGuideCopyMessage ? (
+                  <p className="muted" aria-live="polite">
+                    {syncGuideCopyMessage}
+                  </p>
+                ) : null}
               </div>
               <pre className="sync-template-code">{googleSyncTemplate}</pre>
             </div>
@@ -2562,12 +3163,15 @@ function App() {
                 <button type="button" onClick={() => downloadJson(workspace)}>
                   JSONエクスポート
                 </button>
-                <button type="button" onClick={() => {
-                  importInputRef.current?.click()
-                }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    importInputRef.current?.click();
+                  }}
+                >
                   JSONインポート
                 </button>
-                <button type="button" onClick={() => openCommandPalette('/')}>
+                <button type="button" onClick={() => openCommandPalette("/")}>
                   コマンドを開く
                 </button>
                 <button type="button" onClick={openHelpWindow}>
@@ -2576,13 +3180,16 @@ function App() {
                 <button
                   type="button"
                   onClick={() => {
-                    setIsSyncSettingsOpen(true)
-                    setIsSidebarToolsOpen(false)
+                    setIsSyncSettingsOpen(true);
+                    setIsSidebarToolsOpen(false);
                   }}
                 >
                   同期設定を開く
                 </button>
-                <button type="button" onClick={() => setIsSidebarToolsOpen(false)}>
+                <button
+                  type="button"
+                  onClick={() => setIsSidebarToolsOpen(false)}
+                >
                   閉じる
                 </button>
               </div>
@@ -2591,7 +3198,7 @@ function App() {
         ) : null}
       </div>
     </MantineProvider>
-  )
+  );
 }
 
-export default App
+export default App;
