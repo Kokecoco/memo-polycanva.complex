@@ -15,9 +15,12 @@
     "@blocknote/react": "^0.48.1",
     "@emotion/react": "^11.14.0",
     "@mantine/core": "^8.3.18",
+    "@mantine/dates": "^8.3.18",
     "@mantine/hooks": "^8.3.18",
     "@shikijs/langs-precompiled": "^4.0.2",
     "@shikijs/themes": "^4.0.2",
+    "@tabler/icons-react": "^3.41.1",
+    "dayjs": "^1.11.20",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "shiki": "^4.0.2"

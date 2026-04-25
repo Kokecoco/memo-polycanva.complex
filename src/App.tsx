@@ -6,24 +6,28 @@ import type {
   MouseEvent as ReactMouseEvent,
   ReactNode,
 } from "react";
-import {
-  BlockNoteSchema,
-  createCodeBlockSpec,
-  defaultBlockSpecs,
-} from "@blocknote/core";
-import * as locales from "@blocknote/core/locales";
-import type { PartialBlock } from "@blocknote/core";
-import { BlockNoteView } from "@blocknote/mantine";
-import { useCreateBlockNote } from "@blocknote/react";
 import { MantineProvider } from "@mantine/core";
-import { createHighlighter } from "./shiki.bundle.ts";
+import type { PartialBlock } from "@blocknote/core";
 import "@mantine/core/styles.css";
+import "@mantine/dates/styles.css";
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import googleSyncTemplate from "../google-sync.gs?raw";
 import "./App.css";
+import { CustomEditor } from "./extensions/CustomEditor.tsx";
+import { FullPageDatabase } from "./extensions/FullPageDatabase.tsx";
+import { PageProperties } from "./extensions/PageProperties.tsx";
 
 type PageId = string;
+
+export type DatabaseColumnType = "text" | "number" | "select" | "checkbox" | "date";
+
+export interface DatabaseColumn {
+  id: string;
+  name: string;
+  type: DatabaseColumnType;
+  options?: string[];
+}
 
 interface MemoPage {
   id: PageId;
@@ -35,6 +39,9 @@ interface MemoPage {
   updatedAt: number;
   isTrashed: boolean;
   trashedAt: number | null;
+  kind?: "page" | "database";
+  databaseColumns?: (string | DatabaseColumn)[];
+  properties?: Record<string, string>;
 }
 
 interface Workspace {
@@ -116,45 +123,6 @@ const defaultContent: PartialBlock[] = [
     content: "",
   },
 ];
-
-const codeBlockSupportedLanguages: Record<
-  string,
-  { name: string; aliases?: string[] }
-> = {
-  text: { name: "Plain Text", aliases: ["plaintext", "txt"] },
-  javascript: { name: "JavaScript", aliases: ["js"] },
-  typescript: { name: "TypeScript", aliases: ["ts"] },
-  jsx: { name: "JSX" },
-  tsx: { name: "TSX" },
-  json: { name: "JSON" },
-  html: { name: "HTML" },
-  css: { name: "CSS" },
-  bash: { name: "Bash", aliases: ["sh", "shell", "zsh"] },
-  markdown: { name: "Markdown", aliases: ["md"] },
-  yaml: { name: "YAML", aliases: ["yml"] },
-  sql: { name: "SQL" },
-  python: { name: "Python", aliases: ["py"] },
-  go: { name: "Go" },
-  rust: { name: "Rust", aliases: ["rs"] },
-  java: { name: "Java" },
-};
-
-const codeBlockHighlighterPromise = createHighlighter({
-  themes: ["one-dark-pro"],
-  langs: Object.keys(codeBlockSupportedLanguages).filter(
-    (language) => language !== "text",
-  ),
-});
-
-const codeBlockSchema = BlockNoteSchema.create({
-  blockSpecs: {
-    ...defaultBlockSpecs,
-    codeBlock: createCodeBlockSpec({
-      supportedLanguages: codeBlockSupportedLanguages,
-      createHighlighter: () => codeBlockHighlighterPromise,
-    }),
-  },
-});
 
 function createDefaultSyncSettings(): SyncSettings {
   const randomSuffix = (() => {
@@ -357,6 +325,7 @@ async function callSyncApiSave(
 function createPage(
   parentId: PageId | null = null,
   title = "新しいページ",
+  kind: "page" | "database" = "page"
 ): MemoPage {
   const fallbackId = `${Date.now()}-${Math.round((globalThis.performance?.now?.() ?? 0) * 1000)}-${fallbackIdCounter++}`;
   const now = Date.now();
@@ -370,6 +339,9 @@ function createPage(
     updatedAt: now,
     isTrashed: false,
     trashedAt: null,
+    kind,
+    databaseColumns: kind === "database" ? ["列1", "列2"] : undefined,
+    properties: {},
   };
 }
 
@@ -480,6 +452,19 @@ function normalizeWorkspace(value: unknown): Workspace | null {
         Number.isFinite(page.trashedAt)
           ? page.trashedAt
           : null,
+      kind: page.kind === "database" ? "database" : "page",
+      databaseColumns: Array.isArray(page.databaseColumns)
+        ? page.databaseColumns.map((col) => {
+            if (typeof col === "string") {
+              return { id: col, name: col, type: "text" } as DatabaseColumn;
+            }
+            return col;
+          })
+        : undefined,
+      properties:
+        typeof page.properties === "object" && page.properties !== null
+          ? (page.properties as Record<string, string>)
+          : {},
     };
   }
 
@@ -499,19 +484,6 @@ function normalizeWorkspace(value: unknown): Workspace | null {
     rootPageIds,
     selectedPageId,
   };
-}
-
-function parseContent(raw: string): PartialBlock[] {
-  if (!raw) {
-    return defaultContent;
-  }
-
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as PartialBlock[]) : defaultContent;
-  } catch {
-    return defaultContent;
-  }
 }
 
 function collectDescendants(
@@ -644,33 +616,8 @@ function downloadJson(workspace: Workspace): void {
   URL.revokeObjectURL(url);
 }
 
-function Editor({
-  content,
-  onContentChange,
-}: {
-  content: string;
-  onContentChange: (content: string) => void;
-}) {
-  const initialContent = useMemo(() => parseContent(content), [content]);
-  const editor = useCreateBlockNote({
-    schema: codeBlockSchema,
-    initialContent,
-    dictionary: locales.ja,
-  });
+// Removed standard Editor in favor of CustomEditor
 
-  return (
-    <BlockNoteView
-      editor={editor}
-      onChange={() => {
-        onContentChange(JSON.stringify(editor.document));
-      }}
-      slashMenu
-      sideMenu
-      formattingToolbar
-      className="editor-custom-style"
-    />
-  );
-}
 
 function App() {
   const [workspace, setWorkspace] = useState<Workspace>(() =>
@@ -785,6 +732,25 @@ function App() {
 
     void saveWorkspaceToIndexedDB(workspace);
   }, [workspace, isLoaded]);
+
+  // Handle cross-page navigation from inline mentions
+  useEffect(() => {
+    const handlePageLinkClick = (e: Event) => {
+      const customEvent = e as CustomEvent<{ pageId: string }>;
+      const { pageId } = customEvent.detail;
+      if (pageId) {
+        setWorkspace((prev) => {
+          if (!prev.pages[pageId]) return prev;
+          return { ...prev, selectedPageId: pageId };
+        });
+        setShowTrash(false);
+        setContextMenu(null);
+        setSelectedPageIds([]);
+      }
+    };
+    window.addEventListener("polycanva-page-link-click", handlePageLinkClick);
+    return () => window.removeEventListener("polycanva-page-link-click", handlePageLinkClick);
+  }, []);
 
   const loadCloudRecord = useCallback(async (): Promise<CloudRecord | null> => {
     if (!isSyncConfigured(syncSettings)) {
@@ -1161,6 +1127,56 @@ function App() {
     setShowTrash(false);
     setSelectedPageIds(createdPageId ? [createdPageId] : []);
     setContextMenu(null);
+  }, []);
+
+  const addDatabase = useCallback((parentId: PageId | null) => {
+    let createdPageId: PageId | null = null;
+    setWorkspace((previousWorkspace) => {
+      const nextPage = createPage(parentId, "新しいデータベース", "database");
+      createdPageId = nextPage.id;
+      const nextPages = {
+        ...previousWorkspace.pages,
+        [nextPage.id]: nextPage,
+      };
+
+      if (parentId && nextPages[parentId]) {
+        nextPages[parentId] = {
+          ...nextPages[parentId],
+          childrenIds: [...nextPages[parentId].childrenIds, nextPage.id],
+          updatedAt: Date.now(),
+        };
+      }
+
+      return {
+        ...previousWorkspace,
+        pages: nextPages,
+        rootPageIds: parentId
+          ? previousWorkspace.rootPageIds
+          : [...previousWorkspace.rootPageIds, nextPage.id],
+        selectedPageId: nextPage.id,
+      };
+    });
+    setShowTrash(false);
+    setSelectedPageIds(createdPageId ? [createdPageId] : []);
+    setContextMenu(null);
+  }, []);
+
+  const updatePage = useCallback((pageId: string, updates: Partial<MemoPage>) => {
+    setWorkspace((prev) => {
+      const page = prev.pages[pageId];
+      if (!page) return prev;
+      return {
+        ...prev,
+        pages: {
+          ...prev.pages,
+          [page.id]: {
+            ...page,
+            ...updates,
+            updatedAt: Date.now(),
+          }
+        }
+      };
+    });
   }, []);
 
   const renamePage = useCallback(
@@ -2348,9 +2364,14 @@ function App() {
             <>
               <div className="sidebar-header">
                 <h1>Memo Polycanva</h1>
-                <button type="button" onClick={() => addPage(null)}>
-                  ルートページ追加
-                </button>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button type="button" onClick={() => addPage(null)}>
+                    + ページ
+                  </button>
+                  <button type="button" onClick={() => addDatabase(null)}>
+                    + DB
+                  </button>
+                </div>
               </div>
               <div className="search-box">
                 <input
@@ -2752,29 +2773,47 @@ function App() {
           }}
         >
           {displayedPage ? (
-            <>
-              <header className="editor-header">
-                <h2>
-                  {displayedPage.isPinned ? "📌 " : ""}
-                  {displayedPage.title}
-                </h2>
-                <p className="updated-at">
-                  最終更新: {formatDateTime(displayedPage.updatedAt)}
-                </p>
-                {displayedPage.isTrashed ? (
-                  <p className="muted">
-                    このページはごみ箱にあります。右クリックメニューから復元できます。
-                  </p>
-                ) : null}
-              </header>
-              <Editor
-                key={displayedPage.id}
-                content={displayedPage.content}
-                onContentChange={(content) =>
-                  onPageContentChange(displayedPage.id, content)
-                }
+            displayedPage.kind === "database" ? (
+              <FullPageDatabase
+                page={displayedPage}
+                workspace={workspace}
+                updatePage={updatePage}
+                addPage={addPage}
+                deletePage={movePageToTrash}
               />
-            </>
+            ) : (
+              <>
+                <header className="editor-header">
+                  <h2>
+                    {displayedPage.isPinned ? "📌 " : ""}
+                    {displayedPage.title}
+                  </h2>
+                  <p className="updated-at">
+                    最終更新: {formatDateTime(displayedPage.updatedAt)}
+                  </p>
+                  {displayedPage.isTrashed ? (
+                    <p className="muted">
+                      このページはごみ箱にあります。右クリックメニューから復元できます。
+                    </p>
+                  ) : null}
+                </header>
+                {displayedPage.parentId && workspace.pages[displayedPage.parentId]?.kind === "database" && (
+                  <PageProperties 
+                    page={displayedPage} 
+                    parentDatabase={workspace.pages[displayedPage.parentId]}
+                    updatePage={updatePage}
+                  />
+                )}
+                <CustomEditor
+                  key={displayedPage.id}
+                  content={displayedPage.content}
+                  onContentChange={(content) =>
+                    onPageContentChange(displayedPage.id, content)
+                  }
+                  pages={workspace.pages}
+                />
+              </>
+            )
           ) : (
             <p>
               {showTrash

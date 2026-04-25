@@ -1,0 +1,32 @@
+.custom-block-wrapper table {
+  table-layout: auto !important;
+  width: auto !important;
+  border-collapse: separate !important;
+  margin: 0 !important;
+}
+
+.custom-block-wrapper .mantine-DatePicker-table {
+  width: 100% !important;
+}
+
+.custom-block-wrapper td, 
+.custom-block-wrapper th {
+  border: none !important;
+  padding: 0 !important;
+  min-width: 0 !important;
+  background-color: transparent !important;
+}
+
+/* Database needs its own table resets to retain mantine styling but avoid BlockNote overrides */
+.database-block-wrapper table {
+  table-layout: auto !important;
+  width: 100% !important;
+  border-collapse: collapse !important;
+}
+
+.database-block-wrapper td, 
+.database-block-wrapper th {
+  border: 1px solid var(--mantine-color-gray-3) !important;
+  padding: 8px !important;
+  min-width: 100px !important;
+}
