@@ -146,7 +146,7 @@
 .sidebar-header {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .sidebar-header h1 {
@@ -154,6 +154,23 @@
   font-size: 0.95rem;
   font-weight: 700;
   color: #111827;
+}
+
+.sidebar-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.button-group {
+  display: flex;
+  gap: 4px;
+}
+
+.button-group button {
+  padding: 4px 6px !important;
+  font-size: 0.72rem !important;
 }
 
 .sidebar-actions {
@@ -443,50 +460,36 @@
   padding: 10px;
 }
 
-.inline-add {
-  border: 1px solid transparent;
-  background: #f8fafc;
-  font-size: 0.95rem;
-  line-height: 1;
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  padding: 0;
+.page-item-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+}
+
+.page-item:hover .page-item-actions,
+.page-item:focus-within .page-item-actions {
+  opacity: 1;
+  visibility: visible;
+}
+
+.action-icon {
+  border: none !important;
+  background: transparent !important;
+  font-size: 0.82rem;
+  padding: 2px 4px !important;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border-radius: 4px;
   color: #64748b;
-  opacity: 0;
-  visibility: hidden;
-  transform: scale(0.95);
-  transition:
-    opacity 0.12s ease,
-    transform 0.12s ease,
-    background-color 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease,
-    visibility 0.12s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-.page-item:hover .inline-add,
-.page-item:focus-within .inline-add {
-  opacity: 1;
-  visibility: visible;
-  transform: scale(1);
-}
-
-.inline-add:hover {
-  background: #eef2ff;
-  border-color: #cdd9f4;
+.action-icon:hover {
+  background: #e9eef8 !important;
   color: #334155;
-}
-
-.inline-add:focus-visible {
-  opacity: 1;
-  visibility: visible;
-  outline: none;
-  border-color: #93c5fd;
-  box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.35);
 }
 
 .selection-tools {
@@ -656,6 +659,13 @@
   border: 1px solid #e5e9f0;
   border-radius: 8px;
   padding: 8px;
+  transition: background-color 0.1s ease, border-color 0.1s ease;
+}
+
+.command-list li.selected {
+  background: #f0f7ff;
+  border-color: #9fb7f5;
+  outline: 1px solid #9fb7f5;
 }
 
 .command-list li button {

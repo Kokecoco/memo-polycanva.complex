@@ -17,17 +17,55 @@ import "./App.css";
 import { CustomEditor } from "./extensions/CustomEditor.tsx";
 import { FullPageDatabase } from "./extensions/FullPageDatabase.tsx";
 import { PageProperties } from "./extensions/PageProperties.tsx";
+import { registry } from "./extensions/registry";
+import type { ActionLocation } from "./extensions/registry";
+import { useRegisterBuiltInActions } from "./extensions/BuiltInActions";
+
 
 type PageId = string;
 
-export type DatabaseColumnType = "text" | "number" | "select" | "checkbox" | "date";
+export type DatabaseColumnType = "text" | "number" | "select" | "multi-select" | "checkbox" | "date" | "formula" | "relation";
 
 export interface DatabaseColumn {
   id: string;
   name: string;
   type: DatabaseColumnType;
   options?: string[];
+  formula?: string;
+  relatedDatabaseId?: string;
 }
+
+
+export type DatabaseFilterOperator = "contains" | "not_contains" | "equals" | "not_equals" | "greater_than" | "less_than" | "is_empty" | "is_not_empty";
+
+export interface DatabaseFilter {
+  id: string;
+  columnId: string;
+  operator: DatabaseFilterOperator;
+  value: string;
+}
+
+export interface DatabaseSort {
+  id: string;
+  columnId: string;
+  direction: "asc" | "desc";
+}
+
+export type DatabaseViewType = "table" | "list" | "kanban" | "gallery" | "calendar" | "timeline";
+
+export interface DatabaseView {
+  id: string;
+  name: string;
+  type: DatabaseViewType;
+  filters: DatabaseFilter[];
+  sorts: DatabaseSort[];
+  groupByColumnId?: string;
+  visibleColumnIds?: string[];
+  calendarDateColumnId?: string;
+  timelineStartColumnId?: string;
+  timelineEndColumnId?: string;
+}
+
 
 interface MemoPage {
   id: PageId;
@@ -40,7 +78,9 @@ interface MemoPage {
   isTrashed: boolean;
   trashedAt: number | null;
   kind?: "page" | "database";
-  databaseColumns?: (string | DatabaseColumn)[];
+  databaseColumns?: DatabaseColumn[];
+  databaseViews?: DatabaseView[];
+  currentViewId?: string;
   properties?: Record<string, string>;
 }
 
@@ -99,7 +139,6 @@ const DB_VERSION = 1;
 const STORE_NAME = "workspace";
 const STORE_KEY = "default";
 const SYNC_SETTINGS_STORAGE_KEY = "memo-polycanva.sync-settings";
-const MAX_SEARCH_RESULTS = 20;
 const SYNC_DEBOUNCE_MS = 1800;
 const MAX_SYNC_JSON_BYTES = 900000;
 const SYNC_CONFLICT_PROMPT_MESSAGE =
@@ -340,7 +379,9 @@ function createPage(
     isTrashed: false,
     trashedAt: null,
     kind,
-    databaseColumns: kind === "database" ? ["列1", "列2"] : undefined,
+    databaseColumns: kind === "database" ? [{ id: "col1", name: "名前", type: "text" }, { id: "col2", name: "ステータス", type: "select", options: ["未着手", "進行中", "完了"] }] : undefined,
+    databaseViews: kind === "database" ? [{ id: "view1", name: "デフォルトビュー", type: "table", filters: [], sorts: [] }] : undefined,
+    currentViewId: kind === "database" ? "view1" : undefined,
     properties: {},
   };
 }
@@ -458,9 +499,15 @@ function normalizeWorkspace(value: unknown): Workspace | null {
             if (typeof col === "string") {
               return { id: col, name: col, type: "text" } as DatabaseColumn;
             }
-            return col;
+            return col as DatabaseColumn;
           })
         : undefined,
+      databaseViews: Array.isArray(page.databaseViews)
+        ? page.databaseViews
+        : (page.kind === "database" ? [{ id: "view1", name: "デフォルトビュー", type: "table", filters: [], sorts: [] }] : undefined),
+      currentViewId: typeof page.currentViewId === "string" 
+        ? page.currentViewId 
+        : (page.kind === "database" ? "view1" : undefined),
       properties:
         typeof page.properties === "object" && page.properties !== null
           ? (page.properties as Record<string, string>)
@@ -650,7 +697,11 @@ function App() {
     string | null
   >(null);
   const [commandQuery, setCommandQuery] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
+
+  useEffect(() => {
+    setCommandSelectedIndex(0);
+  }, [commandQuery]);
   const [showTrash, setShowTrash] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -1097,10 +1148,10 @@ function App() {
     commandInputRef.current?.select();
   }, [isCommandPaletteOpen]);
 
-  const addPage = useCallback((parentId: PageId | null) => {
+  const addPage = useCallback((parentId: PageId | null, properties: Record<string, string> = {}) => {
     let createdPageId: PageId | null = null;
     setWorkspace((previousWorkspace) => {
-      const nextPage = createPage(parentId);
+      const nextPage = { ...createPage(parentId), properties: { ...properties } };
       createdPageId = nextPage.id;
       const nextPages = {
         ...previousWorkspace.pages,
@@ -1535,11 +1586,6 @@ function App() {
     [],
   );
 
-  const openHelpWindow = useCallback(() => {
-    setIsHelpOpen(true);
-    setIsSidebarToolsOpen(false);
-    setContextMenu(null);
-  }, []);
 
   const openCommandPalette = useCallback((prefix = "") => {
     setCommandQuery(prefix);
@@ -1550,181 +1596,7 @@ function App() {
 
   const selectedPage = workspace.pages[workspace.selectedPageId] ?? null;
 
-  const commandActions = useMemo<CommandAction[]>(() => {
-    const canEditSelected = Boolean(selectedPage && !selectedPage.isTrashed);
 
-    return [
-      {
-        id: "create-root",
-        label: "/new ルートページを作成",
-        description: "新しいルートページを追加します",
-        shortcut: "Ctrl/Cmd + Shift + N",
-        tags: ["new", "root", "page", "ルート", "作成"],
-        prefixes: ["/"],
-      },
-      {
-        id: "create-child",
-        label: "@child 子ページを作成",
-        description: "現在のページの子ページを追加します",
-        shortcut: "Ctrl/Cmd + N",
-        tags: ["child", "sub", "子ページ", "作成"],
-        prefixes: ["@"],
-        disabled: !canEditSelected,
-      },
-      {
-        id: "rename-page",
-        label: "@rename ページ名を変更",
-        description: "現在のページ名を変更します",
-        shortcut: "Ctrl/Cmd + R",
-        tags: ["rename", "title", "名前変更", "ページ名"],
-        prefixes: ["@"],
-        disabled: !canEditSelected,
-      },
-      {
-        id: "toggle-pin",
-        label: "@pin ピン留め切替",
-        description: "現在のページのピン留めを切り替えます",
-        shortcut: "Ctrl/Cmd + Shift + P",
-        tags: ["pin", "favorite", "ピン", "固定"],
-        prefixes: ["@"],
-        disabled: !canEditSelected,
-      },
-      {
-        id: "move-trash",
-        label: "@trash ごみ箱へ移動",
-        description: "現在のページをごみ箱に移動します",
-        shortcut: "Ctrl/Cmd + Delete",
-        tags: ["trash", "delete", "ごみ箱", "削除"],
-        prefixes: ["@"],
-        disabled: !canEditSelected,
-      },
-      {
-        id: "focus-search",
-        label: "/search 検索にフォーカス",
-        description: "検索欄へフォーカスします",
-        shortcut: "Ctrl/Cmd + K",
-        tags: ["search", "find", "検索"],
-        prefixes: ["/"],
-      },
-      {
-        id: "export-json",
-        label: "/export JSONエクスポート",
-        description: "ワークスペースをJSON出力します",
-        tags: ["export", "json", "backup", "出力"],
-        prefixes: ["/"],
-      },
-      {
-        id: "import-json",
-        label: "/import JSONインポート",
-        description: "JSONファイルを読み込みます",
-        tags: ["import", "json", "読み込み"],
-        prefixes: ["/"],
-      },
-      {
-        id: "toggle-trash-view",
-        label: "/trash ごみ箱表示切替",
-        description: "通常表示とごみ箱表示を切り替えます",
-        tags: ["trash", "view", "ごみ箱", "表示"],
-        prefixes: ["/"],
-      },
-      {
-        id: "open-help",
-        label: "/help ヘルプを開く",
-        description: "ショートカットとコマンド一覧を表示します",
-        shortcut: "Ctrl/Cmd + /",
-        tags: ["help", "shortcut", "コマンド", "ヘルプ"],
-        prefixes: ["/"],
-      },
-    ];
-  }, [selectedPage]);
-
-  const filteredCommands = useMemo(() => {
-    const query = commandQuery.trim().toLowerCase();
-    const prefix = query.startsWith("@")
-      ? "@"
-      : query.startsWith("/")
-        ? "/"
-        : null;
-    const normalized = query.replace(/^[@/]/, "");
-
-    return commandActions.filter((action) => {
-      if (action.disabled) {
-        return false;
-      }
-
-      if (prefix && action.prefixes && !action.prefixes.includes(prefix)) {
-        return false;
-      }
-
-      if (!normalized) {
-        return true;
-      }
-
-      return (
-        action.tags.some((tag) => tag.includes(normalized)) ||
-        action.label.toLowerCase().includes(normalized) ||
-        action.description.toLowerCase().includes(normalized)
-      );
-    });
-  }, [commandActions, commandQuery]);
-
-  const executeCommand = useCallback(
-    (command: CommandAction) => {
-      switch (command.id) {
-        case "create-root":
-          addPage(null);
-          break;
-        case "create-child":
-          if (selectedPage && !selectedPage.isTrashed) {
-            addPage(selectedPage.id);
-          }
-          break;
-        case "rename-page":
-          if (selectedPage && !selectedPage.isTrashed) {
-            renamePage(selectedPage.id);
-          }
-          break;
-        case "toggle-pin":
-          if (selectedPage && !selectedPage.isTrashed) {
-            togglePin(selectedPage.id);
-          }
-          break;
-        case "move-trash":
-          if (selectedPage && !selectedPage.isTrashed) {
-            movePageToTrash(selectedPage.id);
-          }
-          break;
-        case "focus-search":
-          searchInputRef.current?.focus();
-          break;
-        case "export-json":
-          downloadJson(workspace);
-          break;
-        case "import-json":
-          importInputRef.current?.click();
-          break;
-        case "toggle-trash-view":
-          setShowTrash((previous) => !previous);
-          break;
-        case "open-help":
-          openHelpWindow();
-          break;
-        default:
-          break;
-      }
-      setIsCommandPaletteOpen(false);
-      setCommandQuery("");
-    },
-    [
-      addPage,
-      movePageToTrash,
-      openHelpWindow,
-      renamePage,
-      selectedPage,
-      togglePin,
-      workspace,
-    ],
-  );
 
   const copySyncTemplate = useCallback(async () => {
     try {
@@ -1754,130 +1626,6 @@ function App() {
     };
   }, [syncGuideCopyMessage]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setContextMenu(null);
-        setIsHelpOpen(false);
-        setIsCommandPaletteOpen(false);
-        setIsSidebarToolsOpen(false);
-        closeSyncGuide();
-        return;
-      }
-
-      if (
-        isCommandPaletteOpen ||
-        isHelpOpen ||
-        isSyncGuideOpen ||
-        isSidebarToolsOpen
-      ) {
-        return;
-      }
-
-      if (!event.ctrlKey && !event.metaKey) {
-        if (
-          (event.key === "/" || event.key === "@") &&
-          !isEditableElement(event.target)
-        ) {
-          event.preventDefault();
-          openCommandPalette(event.key);
-        }
-        return;
-      }
-
-      const withMeta = event.ctrlKey || event.metaKey;
-      if (!withMeta) {
-        return;
-      }
-
-      const key = event.key.toLowerCase();
-      const targetIsEditable = isEditableElement(event.target);
-      if (key === "k") {
-        event.preventDefault();
-        searchInputRef.current?.focus();
-        return;
-      }
-
-      if (
-        !targetIsEditable &&
-        event.shiftKey &&
-        key === "p" &&
-        selectedPage &&
-        !selectedPage.isTrashed
-      ) {
-        event.preventDefault();
-        togglePin(selectedPage.id);
-        return;
-      }
-
-      if (!targetIsEditable && !event.shiftKey && key === "p") {
-        event.preventDefault();
-        openCommandPalette();
-        return;
-      }
-
-      if (key === "/" || key === "?") {
-        event.preventDefault();
-        setIsHelpOpen((previous) => !previous);
-        return;
-      }
-
-      if (event.shiftKey && key === "n") {
-        event.preventDefault();
-        addPage(null);
-        return;
-      }
-
-      if (
-        !targetIsEditable &&
-        key === "n" &&
-        selectedPage &&
-        !selectedPage.isTrashed
-      ) {
-        event.preventDefault();
-        addPage(selectedPage.id);
-        return;
-      }
-
-      if (
-        !targetIsEditable &&
-        key === "r" &&
-        selectedPage &&
-        !selectedPage.isTrashed
-      ) {
-        event.preventDefault();
-        renamePage(selectedPage.id);
-        return;
-      }
-
-      if (
-        !targetIsEditable &&
-        (key === "backspace" || key === "delete") &&
-        selectedPage &&
-        !selectedPage.isTrashed
-      ) {
-        event.preventDefault();
-        movePageToTrash(selectedPage.id);
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [
-    addPage,
-    closeSyncGuide,
-    isCommandPaletteOpen,
-    isHelpOpen,
-    isSidebarToolsOpen,
-    isSyncGuideOpen,
-    movePageToTrash,
-    openCommandPalette,
-    renamePage,
-    selectedPage,
-    togglePin,
-  ]);
 
   useEffect(() => {
     if (!isSidebarResizing || isSidebarCollapsed) {
@@ -1926,35 +1674,7 @@ function App() {
     [workspace.pages],
   );
 
-  const searchableTextByPageId = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.values(workspace.pages).map((page) => [
-          page.id,
-          `${page.title} ${contentToText(page.content)}`.toLowerCase(),
-        ]),
-      ),
-    [workspace.pages],
-  );
 
-  const searchResults = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) {
-      return [];
-    }
-
-    return Object.values(workspace.pages)
-      .filter((page) => {
-        if (page.isTrashed) {
-          return false;
-        }
-
-        const searchable = searchableTextByPageId[page.id] ?? "";
-        return searchable.includes(q);
-      })
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, MAX_SEARCH_RESULTS);
-  }, [searchQuery, searchableTextByPageId, workspace.pages]);
 
   const activePage = selectedPage;
   const displayedPage =
@@ -2177,6 +1897,258 @@ function App() {
     [],
   );
 
+  const duplicatePage = useCallback((pageId: PageId) => {
+    const original = workspace.pages[pageId];
+    if (!original) return;
+
+    const newId = Math.random().toString(36).substring(2, 9);
+    const newPage = {
+      ...original,
+      id: newId,
+      title: `${original.title} (コピー)`,
+      childrenIds: [], // 単一ページ複製を基本とする
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    setWorkspace((prev) => {
+      const nextPages = { ...prev.pages, [newId]: newPage };
+      let nextRootIds = prev.rootPageIds;
+
+      if (original.parentId) {
+        const parent = nextPages[original.parentId];
+        if (parent) {
+          nextPages[parent.id] = {
+            ...parent,
+            childrenIds: [...parent.childrenIds, newId],
+          };
+        }
+      } else {
+        nextRootIds = [...prev.rootPageIds, newId];
+      }
+
+      return {
+        ...prev,
+        pages: nextPages,
+        rootPageIds: nextRootIds,
+        selectedPageId: newId,
+      };
+    });
+  }, [workspace]);
+
+  const selectDescendants = useCallback((pageId: PageId) => {
+    const ids: PageId[] = [];
+    const traverse = (id: PageId) => {
+      ids.push(id);
+      workspace.pages[id]?.childrenIds.forEach(traverse);
+    };
+    workspace.pages[pageId]?.childrenIds.forEach(traverse);
+    
+    setSelectedPageIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach(id => next.add(id));
+      return Array.from(next);
+    });
+  }, [workspace]);
+
+  const getPagePath = useCallback((pageId: PageId) => {
+    const path: string[] = [];
+    let currentId: PageId | null = workspace.pages[pageId]?.parentId ?? null;
+    while (currentId) {
+      const p = workspace.pages[currentId];
+      if (!p) break;
+      path.unshift(p.title);
+      currentId = p.parentId;
+    }
+    return path.length > 0 ? path.join(" / ") : "ルート";
+  }, [workspace.pages]);
+
+  const actionContext = useMemo(() => ({
+    workspace,
+    selectedPageId: workspace.selectedPageId,
+    canEditSelected: Boolean(selectedPage && !selectedPage.isTrashed),
+    addPage,
+    renamePage,
+    togglePin,
+    movePageToTrash,
+    restorePage,
+    permanentlyDeletePage,
+    movePageToRoot,
+    togglePageCollapsed,
+    togglePageSelection,
+    duplicatePage,
+    selectDescendants,
+    expandAllTreeNodes,
+    collapseAllTreeNodes,
+    toggleSidebar: () => setIsSidebarCollapsed(prev => !prev),
+    selectedPageIdSet,
+    collapsedPageIds,
+    showTrash,
+    focusSearch: () => searchInputRef.current?.focus(),
+    exportJson: () => downloadJson(workspace),
+    importJson: () => importInputRef.current?.click(),
+    toggleTrashView: () => setShowTrash(prev => !prev),
+    openHelp: () => setIsHelpOpen(true),
+  }), [
+    workspace, 
+    selectedPage, 
+    addPage, 
+    renamePage, 
+    togglePin, 
+    movePageToTrash, 
+    restorePage, 
+    permanentlyDeletePage, 
+    movePageToRoot, 
+    togglePageCollapsed, 
+    togglePageSelection,
+    duplicatePage,
+    selectDescendants,
+    expandAllTreeNodes,
+    collapseAllTreeNodes,
+    selectedPageIdSet,
+    collapsedPageIds,
+    showTrash
+  ]);
+
+  useRegisterBuiltInActions(actionContext);
+
+  const commandActions = useMemo(() => {
+    return registry.getActionsByLocation("command-palette");
+  }, []);
+
+  const filteredCommands = useMemo(() => {
+    const query = commandQuery.trim().toLowerCase();
+    const prefix = query.startsWith("@")
+      ? "@"
+      : query.startsWith("/")
+        ? "/"
+        : null;
+    const normalized = query.replace(/^[@/]/, "");
+
+    const matchedActions = commandActions.filter((action) => {
+      if (action.isDisabled?.(actionContext)) {
+        return false;
+      }
+      if (prefix && action.prefixes && !action.prefixes.includes(prefix)) {
+        return false;
+      }
+      const label = typeof action.label === "function" ? action.label(actionContext) : action.label;
+      if (!normalized) {
+        return prefix === "/" || !prefix;
+      }
+      return (
+        label.toLowerCase().includes(normalized) ||
+        (action.tags && action.tags.some((tag) => tag.toLowerCase().includes(normalized))) ||
+        (action.description && action.description.toLowerCase().includes(normalized))
+      );
+    }).map(a => ({ kind: "action" as const, data: a }));
+
+    let matchedPages: { kind: "page", data: MemoPage }[] = [];
+    if (prefix !== "/") {
+      matchedPages = Object.values(workspace.pages)
+        .filter((page) => {
+          if (page.isTrashed) return false;
+          if (!normalized) return prefix === "@";
+          return page.title.toLowerCase().includes(normalized);
+        })
+        .slice(0, 20)
+        .map(p => ({ kind: "page" as const, data: p }));
+    }
+
+    return [...matchedActions, ...matchedPages];
+  }, [commandActions, commandQuery, actionContext, workspace.pages]);
+
+  const executeCommand = useCallback(
+    (result: any) => {
+      if (result.kind === "action") {
+        result.data.onExecute(actionContext);
+      } else if (result.kind === "page") {
+        setWorkspace((prev) => ({ ...prev, selectedPageId: result.data.id }));
+        setShowTrash(false);
+      }
+      setIsCommandPaletteOpen(false);
+      setCommandQuery("");
+    },
+    [actionContext],
+  );
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setContextMenu(null);
+        setIsHelpOpen(false);
+        setIsCommandPaletteOpen(false);
+        setIsSidebarToolsOpen(false);
+        closeSyncGuide();
+        return;
+      }
+
+      if (
+        isCommandPaletteOpen ||
+        isHelpOpen ||
+        isSyncGuideOpen ||
+        isSidebarToolsOpen
+      ) {
+        return;
+      }
+
+      if (!event.ctrlKey && !event.metaKey) {
+        if (
+          (event.key === "/" || event.key === "@") &&
+          !isEditableElement(event.target)
+        ) {
+          event.preventDefault();
+          openCommandPalette(event.key);
+        }
+        return;
+      }
+
+      const action = registry.matchShortcut(event);
+      if (action) {
+        if (action.isDisabled?.(actionContext)) {
+          return;
+        }
+        event.preventDefault();
+        action.onExecute(actionContext);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [
+    actionContext,
+    closeSyncGuide,
+    isCommandPaletteOpen,
+    isHelpOpen,
+    isSidebarToolsOpen,
+    isSyncGuideOpen,
+    openCommandPalette,
+  ]);
+
+  const renderActions = useCallback((location: ActionLocation, targetId?: string) => {
+    const actions = registry.getActionsByLocation(location);
+    const ctx = { ...actionContext, targetId };
+    return actions
+      .filter(a => !a.isVisible || a.isVisible(ctx))
+      .map(action => (
+        <button
+          key={action.id}
+          type="button"
+          disabled={action.isDisabled?.(ctx)}
+          className={action.id.includes("delete") || action.id.includes("trash") ? "danger" : ""}
+          onClick={() => {
+            action.onExecute(ctx);
+            setContextMenu(null);
+            setIsSidebarToolsOpen(false);
+          }}
+        >
+          {typeof action.label === "function" ? action.label(ctx) : action.label}
+        </button>
+      ));
+  }, [actionContext]);
+
   const pageMenuTarget =
     contextMenu?.target.kind === "page" ? contextMenu.target : null;
   const editorMenuTarget =
@@ -2285,16 +2257,30 @@ function App() {
               {page.isPinned ? "📌 " : ""}
               {page.title}
             </span>
-            <button
-              type="button"
-              className="inline-add"
-              onClick={(event) => {
-                event.stopPropagation();
-                addPage(page.id);
-              }}
-            >
-              +
-            </button>
+            <div className="page-item-actions">
+              <button
+                type="button"
+                className="action-icon"
+                title={page.isPinned ? "ピン解除" : "ピン留め"}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  togglePin(page.id);
+                }}
+              >
+                📌
+              </button>
+              <button
+                type="button"
+                className="action-icon"
+                title="子ページ作成"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  addPage(page.id);
+                }}
+              >
+                +
+              </button>
+            </div>
           </div>
           {hasChildren && !isCollapsed ? (
             <ul>{renderPageTree(visibleChildren, depth + 1)}</ul>
@@ -2364,23 +2350,24 @@ function App() {
             <>
               <div className="sidebar-header">
                 <h1>Memo Polycanva</h1>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  <button type="button" onClick={() => addPage(null)}>
-                    + ページ
-                  </button>
-                  <button type="button" onClick={() => addDatabase(null)}>
-                    + DB
-                  </button>
+                <div className="sidebar-toolbar">
+                  <div className="button-group">
+                    <button type="button" onClick={() => addPage(null)} title="ページ作成">
+                      + ページ
+                    </button>
+                    <button type="button" onClick={() => addDatabase(null)} title="DB作成">
+                      + DB
+                    </button>
+                  </div>
+                  <div className="button-group">
+                    <button type="button" onClick={() => expandAllTreeNodes()} title="すべて展開">
+                      展開
+                    </button>
+                    <button type="button" onClick={() => collapseAllTreeNodes()} title="すべて折りたたむ">
+                      縮小
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div className="search-box">
-                <input
-                  ref={searchInputRef}
-                  type="search"
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="検索（タイトル＋本文）"
-                />
               </div>
 
               <div className="view-toggle">
@@ -2400,33 +2387,6 @@ function App() {
                 </button>
               </div>
 
-              {searchQuery.trim() ? (
-                <section className="sidebar-section">
-                  <h2>検索結果</h2>
-                  <ul className="flat-list">
-                    {searchResults.length === 0 ? (
-                      <li className="muted">一致するページがありません</li>
-                    ) : null}
-                    {searchResults.map((page) => (
-                      <li key={`search-${page.id}`}>
-                        <button
-                          type="button"
-                          className={`list-item${workspace.selectedPageId === page.id && !showTrash ? " active" : ""}`}
-                          onClick={(event) =>
-                            handlePageClick(event, page.id, false)
-                          }
-                          onContextMenu={(event) =>
-                            openPageContextMenu(event, page.id)
-                          }
-                        >
-                          {page.isPinned ? "📌 " : ""}
-                          {page.title}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              ) : null}
 
               {pinnedPages.length > 0 ? (
                 <section className="sidebar-section">
@@ -2828,134 +2788,12 @@ function App() {
             className="context-menu"
             style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
           >
-            {pageMenuTarget && pageContextPage ? (
-              pageContextPage.isTrashed ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => togglePageSelection(pageMenuTarget.pageId)}
-                  >
-                    {selectedPageIdSet.has(pageMenuTarget.pageId)
-                      ? "選択解除"
-                      : "選択に追加"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => restorePage(pageMenuTarget.pageId)}
-                  >
-                    復元
-                  </button>
-                  {selectedVisiblePageIds.length > 1 ? (
-                    <button type="button" onClick={bulkRestoreSelected}>
-                      選択中をまとめて復元 ({selectedVisiblePageIds.length})
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="danger"
-                    onClick={() => permanentlyDeletePage(pageMenuTarget.pageId)}
-                  >
-                    完全削除
-                  </button>
-                  {selectedVisiblePageIds.length > 1 ? (
-                    <button
-                      type="button"
-                      className="danger"
-                      onClick={bulkPermanentlyDeleteSelected}
-                    >
-                      選択中をまとめて完全削除 ({selectedVisiblePageIds.length})
-                    </button>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => togglePageSelection(pageMenuTarget.pageId)}
-                  >
-                    {selectedPageIdSet.has(pageMenuTarget.pageId)
-                      ? "選択解除"
-                      : "選択に追加"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => addPage(pageMenuTarget.pageId)}
-                  >
-                    子ページを作成
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => renamePage(pageMenuTarget.pageId)}
-                  >
-                    名前を変更
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => togglePin(pageMenuTarget.pageId)}
-                  >
-                    {pageContextPage.isPinned ? "ピン留め解除" : "ピン留め"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => movePageToRoot(pageMenuTarget.pageId)}
-                  >
-                    ルートへ移動
-                  </button>
-                  {pageContextPage.childrenIds.length > 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => togglePageCollapsed(pageMenuTarget.pageId)}
-                    >
-                      {collapsedPageIds.includes(pageMenuTarget.pageId)
-                        ? "子ページを展開"
-                        : "子ページを折りたたむ"}
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="danger"
-                    onClick={() => movePageToTrash(pageMenuTarget.pageId)}
-                  >
-                    ごみ箱へ移動
-                  </button>
-                  {selectedVisiblePageIds.length > 1 ? (
-                    <button
-                      type="button"
-                      className="danger"
-                      onClick={bulkMoveSelectedToTrash}
-                    >
-                      選択中をまとめてごみ箱へ移動 (
-                      {selectedVisiblePageIds.length})
-                    </button>
-                  ) : null}
-                </>
-              )
+            {pageMenuTarget ? (
+              renderActions("context-menu:page", pageMenuTarget.pageId)
             ) : null}
 
             {contextMenu.target.kind === "sidebar" ? (
-              <>
-                <button type="button" onClick={() => addPage(null)}>
-                  ルートページを作成
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowTrash((previous) => !previous)}
-                >
-                  {showTrash ? "通常表示へ切替" : "ごみ箱を表示"}
-                </button>
-                <button type="button" onClick={() => openCommandPalette("/")}>
-                  コマンドを開く
-                </button>
-                <button type="button" onClick={collapseAllTreeNodes}>
-                  ツリーをすべて折りたたむ
-                </button>
-                <button type="button" onClick={expandAllTreeNodes}>
-                  ツリーをすべて展開
-                </button>
-                <button type="button" onClick={openHelpWindow}>
-                  ヘルプを開く
-                </button>
-              </>
+              renderActions("context-menu:sidebar")
             ) : null}
 
             {editorMenuTarget ? (
@@ -2976,51 +2814,14 @@ function App() {
                       完全削除
                     </button>
                   </>
-                ) : editorContextPage ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => addPage(editorMenuPageId)}
-                    >
-                      子ページを作成
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => renamePage(editorMenuPageId)}
-                    >
-                      名前を変更
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => togglePin(editorMenuPageId)}
-                    >
-                      {editorContextPage?.isPinned
-                        ? "ピン留め解除"
-                        : "ピン留め"}
-                    </button>
-                    {editorContextPage?.parentId ? (
-                      <button
-                        type="button"
-                        onClick={() => movePageToRoot(editorContextPage.id)}
-                      >
-                        ルートへ移動
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="danger"
-                      onClick={() => movePageToTrash(editorMenuPageId)}
-                    >
-                      ごみ箱へ移動
-                    </button>
-                  </>
-                ) : null
+                ) : (
+                  renderActions("context-menu:editor", editorMenuPageId)
+                )
               ) : (
-                <button type="button" onClick={() => addPage(null)}>
-                  ルートページを作成
-                </button>
+                renderActions("context-menu:editor")
               )
             ) : null}
+
           </div>
         ) : null}
 
@@ -3047,9 +2848,22 @@ function App() {
                 placeholder="コマンドを入力（/ か @ で絞り込み）"
                 onChange={(event) => setCommandQuery(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && filteredCommands[0]) {
+                  if (event.key === "Enter") {
+                    const selected = filteredCommands[commandSelectedIndex];
+                    if (selected) {
+                      event.preventDefault();
+                      executeCommand(selected);
+                    }
+                  } else if (event.key === "ArrowDown") {
                     event.preventDefault();
-                    executeCommand(filteredCommands[0]);
+                    setCommandSelectedIndex((prev) => 
+                      filteredCommands.length > 0 ? (prev + 1) % filteredCommands.length : 0
+                    );
+                  } else if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setCommandSelectedIndex((prev) => 
+                      filteredCommands.length > 0 ? (prev - 1 + filteredCommands.length) % filteredCommands.length : 0
+                    );
                   }
                 }}
               />
@@ -3057,18 +2871,37 @@ function App() {
                 {filteredCommands.length === 0 ? (
                   <li className="muted">一致するコマンドがありません</li>
                 ) : null}
-                {filteredCommands.map((command) => (
-                  <li key={command.id}>
-                    <button
-                      type="button"
-                      onClick={() => executeCommand(command)}
+                {filteredCommands.map((result, idx) => {
+                  const isAction = result.kind === "action";
+                  const item = result.data;
+                  const label = isAction 
+                    ? (typeof (item as any).label === "function" ? (item as any).label(actionContext) : (item as any).label)
+                    : (item as any).title;
+                  const icon = isAction ? "⚡" : "📄";
+                  const description = isAction 
+                    ? (item as any).description 
+                    : `場所: ${getPagePath((item as any).id)} • 最終更新: ${formatDateTime((item as any).updatedAt)}`;
+                  
+                  return (
+                    <li 
+                      key={isAction ? (item as any).id : `page-${(item as any).id}-${idx}`}
+                      className={commandSelectedIndex === idx ? "selected" : ""}
+                      onMouseEnter={() => setCommandSelectedIndex(idx)}
                     >
-                      <span>{command.label}</span>
-                      {command.shortcut ? <kbd>{command.shortcut}</kbd> : null}
-                    </button>
-                    <p className="muted">{command.description}</p>
-                  </li>
-                ))}
+                      <button
+                        type="button"
+                        onClick={() => executeCommand(result)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '0.8em', opacity: 0.6 }}>{icon}</span>
+                          <span>{label}</span>
+                        </div>
+                        {isAction && (item as any).shortcut ? <kbd>{(item as any).shortcut}</kbd> : null}
+                      </button>
+                      {description && <p className="muted">{description}</p>}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           </div>
@@ -3202,23 +3035,7 @@ function App() {
             >
               <h3 id="sidebar-tools-dialog-title">サイドバーツール</h3>
               <div className="sync-actions">
-                <button type="button" onClick={() => downloadJson(workspace)}>
-                  JSONエクスポート
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    importInputRef.current?.click();
-                  }}
-                >
-                  JSONインポート
-                </button>
-                <button type="button" onClick={() => openCommandPalette("/")}>
-                  コマンドを開く
-                </button>
-                <button type="button" onClick={openHelpWindow}>
-                  ヘルプを開く
-                </button>
+                {renderActions("sidebar-tools")}
                 <button
                   type="button"
                   onClick={() => {

@@ -135,6 +135,14 @@ export function CustomEditor({
     schema: customSchema,
     initialContent,
     dictionary: locales.ja,
+    uploadFile: async (file: File) => {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    },
   });
 
   const getMentionMenuItems = (editor: typeof customSchema.BlockNoteEditor) => {
