@@ -124,15 +124,7 @@ interface ContextMenuState {
   y: number;
 }
 
-interface CommandAction {
-  id: string;
-  label: string;
-  description: string;
-  shortcut?: string;
-  tags: string[];
-  prefixes?: Array<"/" | "@">;
-  disabled?: boolean;
-}
+
 
 const DB_NAME = "memo-polycanva";
 const DB_VERSION = 1;
@@ -586,30 +578,7 @@ function findFirstPageId(
   return null;
 }
 
-function collectText(value: unknown): string[] {
-  if (typeof value === "string") {
-    return [value];
-  }
 
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => collectText(item));
-  }
-
-  if (value && typeof value === "object") {
-    return Object.values(value).flatMap((item) => collectText(item));
-  }
-
-  return [];
-}
-
-function contentToText(raw: string): string {
-  try {
-    const parsed = JSON.parse(raw);
-    return collectText(parsed).join(" ");
-  } catch {
-    return raw;
-  }
-}
 
 function formatDateTime(timestamp: number): string {
   if (!Number.isFinite(timestamp)) {
@@ -2154,12 +2123,10 @@ function App() {
   const editorMenuTarget =
     contextMenu?.target.kind === "editor" ? contextMenu.target : null;
   const editorMenuPageId = editorMenuTarget?.pageId ?? null;
-  const pageContextPage = pageMenuTarget
-    ? workspace.pages[pageMenuTarget.pageId]
-    : null;
   const editorContextPage = editorMenuPageId
     ? workspace.pages[editorMenuPageId]
     : null;
+
 
   function renderPageTree(pageIds: PageId[], depth = 0): ReactNode {
     return pageIds.map((pageId) => {

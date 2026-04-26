@@ -284,7 +284,7 @@ export function useRegisterBuiltInActions(context: ActionContext) {
         label: "上のページへ移動",
         shortcut: "Alt+Up",
         locations: ["shortcut"],
-        onExecute: (ctx) => {
+        onExecute: (_ctx) => {
           // Simplified J/K logic could be added here if we had a flat visible list in context
         },
         order: 200,
@@ -294,7 +294,7 @@ export function useRegisterBuiltInActions(context: ActionContext) {
         label: "下のページへ移動",
         shortcut: "Alt+Down",
         locations: ["shortcut"],
-        onExecute: (ctx) => {
+        onExecute: (_ctx) => {
         },
         order: 210,
       }
