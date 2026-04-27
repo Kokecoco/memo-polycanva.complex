@@ -144,8 +144,10 @@ function useColorScheme(): "light" | "dark" {
     }
 
     // Fallback for older Safari
-    darkModeQuery.addListener(handler);
-    return () => darkModeQuery.removeListener(handler);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (darkModeQuery as any).addListener(handler);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return () => (darkModeQuery as any).removeListener(handler);
   }, []);
 
   return scheme;
