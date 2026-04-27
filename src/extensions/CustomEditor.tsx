@@ -121,18 +121,31 @@ const insertTimestamp = (editor: typeof customSchema.BlockNoteEditor) => ({
   subtext: "Insert current date and time.",
 });
 
-const darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
-
 function useColorScheme(): "light" | "dark" {
-  const [scheme, setScheme] = useState<"light" | "dark">(() =>
-    darkModeQuery.matches ? "dark" : "light"
-  );
+  const [scheme, setScheme] = useState<"light" | "dark">(() => {
+    if (typeof window !== "undefined" && "matchMedia" in window) {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    return "light";
+  });
 
   useEffect(() => {
+    if (typeof window === "undefined" || !("matchMedia" in window)) {
+      return;
+    }
+
+    const darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = (e: MediaQueryListEvent) =>
       setScheme(e.matches ? "dark" : "light");
-    darkModeQuery.addEventListener("change", handler);
-    return () => darkModeQuery.removeEventListener("change", handler);
+
+    if ("addEventListener" in darkModeQuery) {
+      darkModeQuery.addEventListener("change", handler);
+      return () => darkModeQuery.removeEventListener("change", handler);
+    }
+
+    // Fallback for older Safari
+    darkModeQuery.addListener(handler);
+    return () => darkModeQuery.removeListener(handler);
   }, []);
 
   return scheme;
