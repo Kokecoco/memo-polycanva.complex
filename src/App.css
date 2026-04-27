@@ -9,6 +9,13 @@
   --sidebar-divider: #e5e9f0;
 }
 
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sidebar-active-border: #4a7fd4;
+    --sidebar-divider: #373a40;
+  }
+}
+
 body {
   font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
 }
@@ -749,4 +756,249 @@ kbd {
 
 .editor-custom-style .bn-editor {
   font-size: 14px;
+}
+
+/* ===== Dark Mode ===== */
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #1a1b1e;
+    color: #c1c2c5;
+  }
+
+  .app-layout {
+    background: #1a1b1e;
+    color: #c1c2c5;
+  }
+
+  .sidebar {
+    border-right-color: #373a40;
+    background: #212226;
+  }
+
+  .sidebar .sidebar-toggle-button {
+    color: #909296;
+  }
+
+  .sidebar .sidebar-toggle-button:hover {
+    background: #2a3050;
+    border-color: #3d4870;
+  }
+
+  .sidebar button:not(.tree-toggle):not(.inline-add),
+  .context-menu button,
+  .search-box input,
+  .modal-panel button {
+    border-color: #4a4f57;
+    background: #2c2d32;
+    color: #c1c2c5;
+  }
+
+  .sidebar-section.sync-settings {
+    border-color: #373a40;
+  }
+
+  .sync-settings label {
+    color: #adb5bd;
+  }
+
+  .sync-settings input {
+    border-color: #4a4f57;
+    background: #2c2d32;
+    color: #c1c2c5;
+  }
+
+  .sync-guide {
+    border-top-color: #4a4f57;
+  }
+
+  .sync-note {
+    color: #fca5a5;
+  }
+
+  .sync-status-panel {
+    border-color: #373a40;
+  }
+
+  .sync-error {
+    color: #f87171;
+  }
+
+  .sidebar button:hover,
+  .context-menu button:hover {
+    background: #2e3039;
+    border-color: #5c6370;
+  }
+
+  .view-toggle .active {
+    background: #1c3a6e;
+    border-color: var(--sidebar-active-border);
+    color: #93c5fd;
+  }
+
+  .sidebar-section {
+    border-color: #373a40;
+    background: #25262b;
+  }
+
+  .sidebar-section h2 {
+    color: #868e96;
+  }
+
+  .sidebar-header h1 {
+    color: #e9ecef;
+  }
+
+  .flat-list .list-item {
+    color: #c1c2c5;
+  }
+
+  .list-item.active {
+    background: #1c3a6e;
+    border-color: var(--sidebar-active-border);
+    color: #93c5fd;
+    font-weight: 600;
+  }
+
+  .page-item:hover {
+    background: #2a2c33;
+  }
+
+  .page-item.active {
+    background: #1c3a6e;
+    border-color: var(--sidebar-active-border);
+  }
+
+  .tree-toggle {
+    color: #868e96;
+  }
+
+  .tree-toggle:hover {
+    background: #2e3039;
+    color: #c1c2c5;
+  }
+
+  .tree-toggle-placeholder {
+    color: #4a4f57;
+  }
+
+  .sidebar-accordion {
+    border-color: var(--sidebar-divider);
+    background: #2c2d32;
+  }
+
+  .sidebar-accordion > summary {
+    color: #c1c2c5;
+  }
+
+  .sidebar-accordion > summary::before {
+    color: #868e96;
+  }
+
+  .sidebar-accordion[open] > summary {
+    border-bottom-color: var(--sidebar-divider);
+  }
+
+  .action-icon {
+    color: #868e96;
+  }
+
+  .action-icon:hover {
+    background: #2e3039 !important;
+    color: #c1c2c5;
+  }
+
+  .selection-tools {
+    border-color: #373a40;
+  }
+
+  .page-select-checkbox {
+    border-color: #4a4f57;
+    background: #2c2d32;
+  }
+
+  .page-select-checkbox:hover {
+    border-color: #6b7280;
+  }
+
+  .page-select-checkbox:checked {
+    border-color: #2563eb;
+    background: #1d4ed8;
+  }
+
+  .page-select-checkbox:disabled {
+    border-color: #373a40;
+    background: #25262b;
+  }
+
+  .updated-at,
+  .muted {
+    color: #868e96;
+  }
+
+  .context-menu {
+    border-color: #4a4f57;
+    background: #25262b;
+    box-shadow: 0 12px 26px rgba(0, 0, 0, 0.5);
+  }
+
+  .context-menu .danger {
+    color: #f87171;
+  }
+
+  .modal-backdrop {
+    background: rgba(0, 0, 0, 0.6);
+  }
+
+  .modal-panel {
+    border-color: #4a4f57;
+    background: #25262b;
+    box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6);
+    color: #c1c2c5;
+  }
+
+  .modal-panel h3 {
+    color: #e9ecef;
+  }
+
+  .command-palette input {
+    border-color: #4a4f57;
+    background: #2c2d32;
+    color: #c1c2c5;
+  }
+
+  .command-list li {
+    border-color: #373a40;
+  }
+
+  .command-list li.selected {
+    background: #1c3a6e;
+    border-color: var(--sidebar-active-border);
+    outline-color: var(--sidebar-active-border);
+  }
+
+  kbd {
+    border-color: #4a4f57;
+    background: #2c2d32;
+    color: #c1c2c5;
+  }
+
+  .help-window code {
+    background: #2c2d32;
+    color: #c1c2c5;
+  }
+
+  .sync-template-code {
+    border-color: #4a4f57;
+    background: #2c2d32;
+    color: #c1c2c5;
+  }
+
+  .sidebar-resize-handle:hover {
+    background: rgba(99, 155, 255, 0.25);
+  }
+
+  .loading {
+    background: #1a1b1e;
+    color: #c1c2c5;
+  }
 }

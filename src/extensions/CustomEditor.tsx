@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useEffect, useState } from "react";
 import {
   BlockNoteSchema,
   createCodeBlockSpec,
@@ -121,6 +121,23 @@ const insertTimestamp = (editor: typeof customSchema.BlockNoteEditor) => ({
   subtext: "Insert current date and time.",
 });
 
+const darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+function useColorScheme(): "light" | "dark" {
+  const [scheme, setScheme] = useState<"light" | "dark">(() =>
+    darkModeQuery.matches ? "dark" : "light"
+  );
+
+  useEffect(() => {
+    const handler = (e: MediaQueryListEvent) =>
+      setScheme(e.matches ? "dark" : "light");
+    darkModeQuery.addEventListener("change", handler);
+    return () => darkModeQuery.removeEventListener("change", handler);
+  }, []);
+
+  return scheme;
+}
+
 export function CustomEditor({
   content,
   onContentChange,
@@ -130,6 +147,7 @@ export function CustomEditor({
   onContentChange: (content: string) => void;
   pages: Record<string, { id: string; title: string; isTrashed?: boolean }>;
 }) {
+  const colorScheme = useColorScheme();
   const initialContent = useMemo(() => parseContent(content), [content]);
   const editor = useCreateBlockNote({
     schema: customSchema,
@@ -180,6 +198,7 @@ export function CustomEditor({
       onChange={() => {
         onContentChange(JSON.stringify(editor.document));
       }}
+      theme={colorScheme}
       slashMenu={false}
       sideMenu
       formattingToolbar
