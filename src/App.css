@@ -9,6 +9,10 @@
   --sidebar-divider: #e5e9f0;
 }
 
+body {
+  font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+}
+
 .app-layout {
   display: grid;
   min-height: 100vh;
