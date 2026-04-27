@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useEffect, useState } from "react";
 import {
   BlockNoteSchema,
   createCodeBlockSpec,
@@ -121,6 +121,36 @@ const insertTimestamp = (editor: typeof customSchema.BlockNoteEditor) => ({
   subtext: "Insert current date and time.",
 });
 
+function useColorScheme(): "light" | "dark" {
+  const [scheme, setScheme] = useState<"light" | "dark">(() => {
+    if (typeof window !== "undefined" && "matchMedia" in window) {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    return "light";
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("matchMedia" in window)) {
+      return;
+    }
+
+    const darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e: MediaQueryListEvent) =>
+      setScheme(e.matches ? "dark" : "light");
+
+    if ("addEventListener" in darkModeQuery) {
+      darkModeQuery.addEventListener("change", handler);
+      return () => darkModeQuery.removeEventListener("change", handler);
+    }
+
+    // Fallback for older Safari
+    darkModeQuery.addListener(handler);
+    return () => darkModeQuery.removeListener(handler);
+  }, []);
+
+  return scheme;
+}
+
 export function CustomEditor({
   content,
   onContentChange,
@@ -130,6 +160,7 @@ export function CustomEditor({
   onContentChange: (content: string) => void;
   pages: Record<string, { id: string; title: string; isTrashed?: boolean }>;
 }) {
+  const colorScheme = useColorScheme();
   const initialContent = useMemo(() => parseContent(content), [content]);
   const editor = useCreateBlockNote({
     schema: customSchema,
@@ -180,6 +211,7 @@ export function CustomEditor({
       onChange={() => {
         onContentChange(JSON.stringify(editor.document));
       }}
+      theme={colorScheme}
       slashMenu={false}
       sideMenu
       formattingToolbar

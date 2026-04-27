@@ -8,6 +8,17 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@100..900&display=swap" rel="stylesheet">
+    <script>
+      (function() {
+        var scheme = "light";
+        try {
+          if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+            scheme = "dark";
+          }
+        } catch (e) {}
+        document.documentElement.setAttribute("data-mantine-color-scheme", scheme);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

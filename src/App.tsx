@@ -2262,7 +2262,7 @@ function App() {
   }
 
   return (
-    <MantineProvider>
+    <MantineProvider defaultColorScheme="auto">
       <div
         className={`app-layout${isSidebarCollapsed ? " sidebar-collapsed" : ""}${isSidebarResizing ? " sidebar-resizing" : ""}`}
         style={{
