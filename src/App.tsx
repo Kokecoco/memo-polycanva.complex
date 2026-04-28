@@ -31,12 +31,13 @@ export interface DatabaseColumn {
   name: string;
   type: DatabaseColumnType;
   options?: string[];
+  optionColors?: Record<string, string>;
   formula?: string;
   relatedDatabaseId?: string;
 }
 
 
-export type DatabaseFilterOperator = "contains" | "not_contains" | "equals" | "not_equals" | "greater_than" | "less_than" | "is_empty" | "is_not_empty";
+export type DatabaseFilterOperator = "contains" | "not_contains" | "equals" | "not_equals" | "greater_than" | "less_than" | "is_empty" | "is_not_empty" | "today" | "this_week" | "overdue";
 
 export interface DatabaseFilter {
   id: string;
@@ -374,6 +375,49 @@ function createPage(
     databaseColumns: kind === "database" ? [{ id: "col1", name: "名前", type: "text" }, { id: "col2", name: "ステータス", type: "select", options: ["未着手", "進行中", "完了"] }] : undefined,
     databaseViews: kind === "database" ? [{ id: "view1", name: "デフォルトビュー", type: "table", filters: [], sorts: [] }] : undefined,
     currentViewId: kind === "database" ? "view1" : undefined,
+    properties: {},
+  };
+}
+
+function createTodoDatabasePage(parentId: PageId | null = null): MemoPage {
+  const fallbackId = `${Date.now()}-${Math.round((globalThis.performance?.now?.() ?? 0) * 1000)}-${fallbackIdCounter++}`;
+  const now = Date.now();
+  const statusColId = "todo_status";
+  return {
+    id: globalThis.crypto?.randomUUID?.() ?? fallbackId,
+    title: "Todoリスト",
+    parentId,
+    childrenIds: [],
+    content: JSON.stringify(defaultContent),
+    isPinned: false,
+    updatedAt: now,
+    isTrashed: false,
+    trashedAt: null,
+    kind: "database",
+    databaseColumns: [
+      { id: "todo_name", name: "タスク名", type: "text" },
+      {
+        id: statusColId,
+        name: "ステータス",
+        type: "select",
+        options: ["未着手", "進行中", "完了"],
+        optionColors: { 未着手: "#868e96", 進行中: "#228be6", 完了: "#2f9e44" },
+      },
+      {
+        id: "todo_priority",
+        name: "優先度",
+        type: "select",
+        options: ["高", "中", "低"],
+        optionColors: { 高: "#e03131", 中: "#e8590c", 低: "#868e96" },
+      },
+      { id: "todo_due", name: "期限", type: "date" },
+      { id: "todo_done", name: "完了", type: "checkbox" },
+    ],
+    databaseViews: [
+      { id: "todo_view_table", name: "テーブル", type: "table", filters: [], sorts: [] },
+      { id: "todo_view_kanban", name: "カンバン", type: "kanban", filters: [], sorts: [], groupByColumnId: statusColId },
+    ],
+    currentViewId: "todo_view_table",
     properties: {},
   };
 }
@@ -1181,6 +1225,38 @@ function App() {
     setContextMenu(null);
   }, []);
 
+  const addTodoDatabase = useCallback((parentId: PageId | null) => {
+    let createdPageId: PageId | null = null;
+    setWorkspace((previousWorkspace) => {
+      const nextPage = createTodoDatabasePage(parentId);
+      createdPageId = nextPage.id;
+      const nextPages = {
+        ...previousWorkspace.pages,
+        [nextPage.id]: nextPage,
+      };
+
+      if (parentId && nextPages[parentId]) {
+        nextPages[parentId] = {
+          ...nextPages[parentId],
+          childrenIds: [...nextPages[parentId].childrenIds, nextPage.id],
+          updatedAt: Date.now(),
+        };
+      }
+
+      return {
+        ...previousWorkspace,
+        pages: nextPages,
+        rootPageIds: parentId
+          ? previousWorkspace.rootPageIds
+          : [...previousWorkspace.rootPageIds, nextPage.id],
+        selectedPageId: nextPage.id,
+      };
+    });
+    setShowTrash(false);
+    setSelectedPageIds(createdPageId ? [createdPageId] : []);
+    setContextMenu(null);
+  }, []);
+
   const updatePage = useCallback((pageId: string, updates: Partial<MemoPage>) => {
     setWorkspace((prev) => {
       const page = prev.pages[pageId];
@@ -1643,6 +1719,43 @@ function App() {
     [workspace.pages],
   );
 
+  // Todo summary: per-database count of overdue+incomplete tasks (feature 6)
+  const todoSummary = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayTs = today.getTime();
+
+    return Object.values(workspace.pages)
+      .filter((page) => page.kind === "database" && !page.isTrashed)
+      .map((dbPage) => {
+        const cols = (dbPage.databaseColumns ?? []) as DatabaseColumn[];
+        const checkboxCol = cols.find((c) => c.type === "checkbox");
+        const dateCol = cols.find((c) => c.type === "date");
+        if (!checkboxCol) return null;
+
+        const rows = (dbPage.childrenIds ?? [])
+          .map((id) => workspace.pages[id])
+          .filter((p) => p && !p.isTrashed);
+
+        const total = rows.length;
+        const done = rows.filter((r) => r.properties?.[checkboxCol.id] === "true").length;
+
+        let overdue = 0;
+        if (dateCol) {
+          overdue = rows.filter((r) => {
+            if (r.properties?.[checkboxCol.id] === "true") return false;
+            const dateStr = r.properties?.[dateCol.id];
+            if (!dateStr) return false;
+            const d = new Date(dateStr);
+            return !isNaN(d.getTime()) && d.getTime() < todayTs;
+          }).length;
+        }
+
+        return { id: dbPage.id, title: dbPage.title, total, done, overdue };
+      })
+      .filter((item): item is { id: string; title: string; total: number; done: number; overdue: number } => item !== null && item.total > 0);
+  }, [workspace.pages]);
+
 
 
   const activePage = selectedPage;
@@ -1958,6 +2071,7 @@ function App() {
     importJson: () => importInputRef.current?.click(),
     toggleTrashView: () => setShowTrash(prev => !prev),
     openHelp: () => setIsHelpOpen(true),
+    addTodoDatabase,
   }), [
     workspace, 
     selectedPage, 
@@ -1976,7 +2090,8 @@ function App() {
     collapseAllTreeNodes,
     selectedPageIdSet,
     collapsedPageIds,
-    showTrash
+    showTrash,
+    addTodoDatabase,
   ]);
 
   useRegisterBuiltInActions(actionContext);
@@ -2325,6 +2440,9 @@ function App() {
                     <button type="button" onClick={() => addDatabase(null)} title="DB作成">
                       + DB
                     </button>
+                    <button type="button" onClick={() => addTodoDatabase(null)} title="Todoリスト作成" className="todo-add-btn">
+                      ✅ Todo
+                    </button>
                   </div>
                   <div className="button-group">
                     <button type="button" onClick={() => expandAllTreeNodes()} title="すべて展開">
@@ -2372,6 +2490,41 @@ function App() {
                           }
                         >
                           📌 {page.title}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+
+              {!showTrash && todoSummary.length > 0 ? (
+                <section className="sidebar-section">
+                  <h2>Todo サマリー</h2>
+                  <ul className="flat-list">
+                    {todoSummary.map((item) => (
+                      <li key={`todo-summary-${item.id}`}>
+                        <button
+                          type="button"
+                          className={`list-item todo-summary-item${workspace.selectedPageId === item.id && !showTrash ? " active" : ""}`}
+                          onClick={() => {
+                            setWorkspace((prev) => ({ ...prev, selectedPageId: item.id }));
+                            setShowTrash(false);
+                          }}
+                          title={`${item.done}/${item.total} 完了${item.overdue > 0 ? ` • 期限超過 ${item.overdue}件` : ""}`}
+                        >
+                          <span className="todo-summary-title">✅ {item.title}</span>
+                          <span className="todo-summary-stats">
+                            {item.overdue > 0 ? (
+                              <span className="todo-overdue-badge">{item.overdue}件超過</span>
+                            ) : null}
+                            <span className="todo-progress-text">{item.done}/{item.total}</span>
+                          </span>
+                          <div className="todo-progress-bar">
+                            <div
+                              className="todo-progress-fill"
+                              style={{ width: item.total > 0 ? `${Math.round((item.done / item.total) * 100)}%` : "0%" }}
+                            />
+                          </div>
                         </button>
                       </li>
                     ))}

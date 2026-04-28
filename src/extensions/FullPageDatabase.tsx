@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { 
   Box, Group, Text, ActionIcon, Button, Paper, Menu, Checkbox, 
   Select as MantineSelect, MultiSelect as MantineMultiSelect, 
-  Tabs, Badge, Stack, Card, Tooltip
+  Tabs, Badge, Stack, Card, Tooltip, Progress, ColorSwatch, SimpleGrid
 } from "@mantine/core";
 import { 
   IconPlus, IconTrash, IconAbc, IconNumbers, IconChevronDown, 
@@ -10,7 +10,7 @@ import {
   IconLayoutKanban, IconLayoutList, IconPhoto, IconFilter, 
   IconSortAscending, IconEye, IconEyeOff, IconSettings, 
   IconChevronLeft, IconChevronRight, IconFunction, IconTag, IconSearch,
-  IconLink, IconTimeline
+  IconLink, IconTimeline, IconSquareCheck, IconSquareX
 } from "@tabler/icons-react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { DatePickerInput } from "@mantine/dates";
@@ -20,6 +20,17 @@ import type {
   DatabaseViewType, DatabaseFilterOperator 
 } from "../App";
 import dayjs from "dayjs";
+
+// Preset option colors for the color picker
+const OPTION_COLOR_PRESETS = [
+  "#868e96", "#2f9e44", "#228be6", "#e03131", "#e8590c",
+  "#f59f00", "#9c36b5", "#0ca678", "#e64980", "#1971c2",
+];
+
+// Resolve a display color for a select option
+function getOptionColor(col: DatabaseColumn, value: string): string | undefined {
+  return col.optionColors?.[value];
+}
 
 // --- Helpers ---
 const calculateFormula = (row: any, col: DatabaseColumn, columns: DatabaseColumn[], visited = new Set<string>()) => {
@@ -106,11 +117,32 @@ const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = 
            styles={{ input: { padding: variant === "unstyled" ? "8px 12px" : "4px 8px" } }}
          />
        );
-    case "select":
+    case "select": {
+      const color = value ? getOptionColor(col, value) : undefined;
+      if (readOnly && value) {
+        return (
+          <Box style={{ padding: "8px 12px" }}>
+            <Badge
+              size="sm"
+              style={{
+                backgroundColor: color ? `${color}22` : undefined,
+                color: color ?? undefined,
+                border: color ? `1px solid ${color}55` : undefined,
+              }}
+              variant="light"
+            >
+              {value}
+            </Badge>
+          </Box>
+        );
+      }
       return (
         <MantineSelect
           variant={variant as any}
-          data={col.options || []}
+          data={(col.options || []).map((opt: string) => {
+            const optColor = getOptionColor(col, opt);
+            return { value: opt, label: opt, color: optColor };
+          })}
           value={value}
           onChange={(v) => {
             if (v !== null && !readOnly) updateCell(rowPage.id, col.id, v);
@@ -119,11 +151,45 @@ const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = 
           searchable
           readOnly={readOnly}
           styles={{ input: { padding: variant === "unstyled" ? "8px 12px" : "4px 8px" } }}
+          renderOption={({ option }: { option: { value: string; label: string; color?: string } }) => {
+            const optColor = getOptionColor(col, option.value);
+            return (
+              <Group gap="xs" wrap="nowrap">
+                {optColor && <Box style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: optColor, flexShrink: 0 }} />}
+                <Text size="sm">{option.label}</Text>
+              </Group>
+            );
+          }}
+          leftSection={value && color ? <Box style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: color }} /> : undefined}
         />
       );
-    case "multi-select":
+    }
+    case "multi-select": {
       let selected: string[] = [];
       try { selected = JSON.parse(value || "[]"); } catch { selected = value ? value.split(",") : []; }
+      if (readOnly && selected.length > 0) {
+        return (
+          <Box style={{ padding: "6px 12px", display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {selected.map((s) => {
+              const optColor = getOptionColor(col, s);
+              return (
+                <Badge
+                  key={s}
+                  size="sm"
+                  style={{
+                    backgroundColor: optColor ? `${optColor}22` : undefined,
+                    color: optColor ?? undefined,
+                    border: optColor ? `1px solid ${optColor}55` : undefined,
+                  }}
+                  variant="light"
+                >
+                  {s}
+                </Badge>
+              );
+            })}
+          </Box>
+        );
+      }
       return (
         <MantineMultiSelect
           variant={variant as any}
@@ -136,7 +202,8 @@ const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = 
           styles={{ input: { padding: variant === "unstyled" ? "8px 12px" : "4px 8px" } }}
         />
       );
-    case "relation":
+    }
+    case "relation": {
       const relatedDbId = col.relatedDatabaseId;
       const relatedDb = relatedDbId ? workspace.pages[relatedDbId] : null;
       const relatedPages = relatedDb ? (relatedDb.childrenIds || []).map((id: string) => workspace.pages[id]).filter((p: any) => p && !p.isTrashed) : [];
@@ -156,6 +223,7 @@ const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = 
           styles={{ input: { padding: variant === "unstyled" ? "8px 12px" : "4px 8px" } }}
         />
       );
+    }
     default:
       return (
         <DebouncedInput
@@ -170,7 +238,7 @@ const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = 
   }
 };
 
-const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePage, deletePage, addPage, updateColumn, addColumn, removeColumn, updateCell, pageId }: any) => {
+const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePage, deletePage, addPage, updateColumn, addColumn, removeColumn, updateCell, pageId, bulkSetCheckbox }: any) => {
   const calculateSummary = (col: DatabaseColumn) => {
     if (col.type === 'number' || col.type === 'formula') {
       const vals = rows.map((r: any) => {
@@ -181,6 +249,10 @@ const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePag
       if (vals.length === 0) return "合計: 0";
       const sum = vals.reduce((a: any, b: any) => a + b, 0);
       return `合計: ${sum.toLocaleString()}`;
+    }
+    if (col.type === 'checkbox') {
+      const done = rows.filter((r: any) => r.properties?.[col.id] === "true").length;
+      return `${done}/${rows.length} 完了`;
     }
     return `個数: ${rows.length}`;
   };
@@ -194,7 +266,7 @@ const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePag
         {visibleColumns.map((col: any) => (
            <Box key={col.id} style={{ borderBottom: "1px solid var(--mantine-color-gray-3)", borderRight: "1px solid var(--mantine-color-gray-3)", padding: "4px 8px", backgroundColor: "var(--mantine-color-gray-1)" }}>
              <Group wrap="nowrap" gap="xs" justify="space-between">
-               <Menu shadow="md" width={220} position="bottom-start" closeOnItemClick={false}>
+               <Menu shadow="md" width={260} position="bottom-start" closeOnItemClick={false}>
                  <Menu.Target>
                    <Group wrap="nowrap" gap="xs" style={{ cursor: 'pointer', flex: 1 }}>
                      {getIconForType(col.type)}
@@ -215,9 +287,41 @@ const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePag
                            size="xs" 
                            placeholder="例: 未着手, 進行中, 完了"
                            value={col.options?.join(", ") || ""} 
-                           onChange={(v) => updateColumn(columns.findIndex((c: any) => c.id === col.id), { options: v.split(",").map(s => s.trim()).filter(Boolean) })}
+                           onChange={(v) => updateColumn(columns.findIndex((c: any) => c.id === col.id), { options: v.split(",").map((s: string) => s.trim()).filter(Boolean) })}
                          />
                        </Box>
+                       <Menu.Label>選択肢の色</Menu.Label>
+                       <Box p="xs">
+                         <Stack gap={6}>
+                           {(col.options || []).map((opt: string) => (
+                             <Group key={opt} gap="xs" wrap="nowrap">
+                               <Text size="xs" style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{opt}</Text>
+                               <SimpleGrid cols={5} spacing={4}>
+                                 {OPTION_COLOR_PRESETS.map((preset) => (
+                                   <ColorSwatch
+                                     key={preset}
+                                     color={preset}
+                                     size={16}
+                                     style={{ cursor: "pointer", outline: (col.optionColors?.[opt] === preset) ? `2px solid ${preset}` : "none", outlineOffset: 1 }}
+                                     onClick={() => {
+                                       const idx = columns.findIndex((c: any) => c.id === col.id);
+                                       updateColumn(idx, { optionColors: { ...(col.optionColors || {}), [opt]: preset } });
+                                     }}
+                                   />
+                                 ))}
+                               </SimpleGrid>
+                             </Group>
+                           ))}
+                         </Stack>
+                       </Box>
+                     </>
+                   )}
+                   {col.type === "checkbox" && bulkSetCheckbox && (
+                     <>
+                       <Menu.Divider />
+                       <Menu.Label>一括操作</Menu.Label>
+                       <Menu.Item leftSection={<IconSquareCheck size={14}/>} onClick={() => bulkSetCheckbox(col.id, true)}>全て完了にする</Menu.Item>
+                       <Menu.Item leftSection={<IconSquareX size={14}/>} onClick={() => bulkSetCheckbox(col.id, false)}>全て未完了にする</Menu.Item>
                      </>
                    )}
                    {col.type === "formula" && (
@@ -325,12 +429,47 @@ const DatabaseListView = ({ rows, visibleColumns, columns, updatePage, deletePag
             />
             <Group gap="xs">
               {visibleColumns.map((col: any) => {
-                let val = col.type === 'formula' ? calculateFormula(row, col, columns) : (row.properties?.[col.id]);
-                if (!val || col.type === "checkbox") return null;
-                if (col.type === 'multi-select') {
-                  try { val = JSON.parse(val).join(", "); } catch { /* ignore */ }
+                const rawVal = col.type === 'formula' ? calculateFormula(row, col, columns) : (row.properties?.[col.id]);
+                if (!rawVal || col.type === "checkbox") return null;
+                if (col.type === 'select') {
+                  const optColor = getOptionColor(col, rawVal);
+                  return (
+                    <Badge
+                      key={col.id}
+                      size="sm"
+                      style={optColor ? {
+                        backgroundColor: `${optColor}22`,
+                        color: optColor,
+                        border: `1px solid ${optColor}55`,
+                      } : undefined}
+                      variant="light"
+                    >
+                      {rawVal}
+                    </Badge>
+                  );
                 }
-                return <Badge key={col.id} variant="light" color="gray" size="sm">{col.name}: {val}</Badge>;
+                if (col.type === 'multi-select') {
+                  let vals: string[] = [];
+                  try { vals = JSON.parse(rawVal); } catch { vals = rawVal ? rawVal.split(",") : []; }
+                  return vals.map((v: string) => {
+                    const optColor = getOptionColor(col, v);
+                    return (
+                      <Badge
+                        key={`${col.id}-${v}`}
+                        size="sm"
+                        style={optColor ? {
+                          backgroundColor: `${optColor}22`,
+                          color: optColor,
+                          border: `1px solid ${optColor}55`,
+                        } : undefined}
+                        variant="light"
+                      >
+                        {v}
+                      </Badge>
+                    );
+                  });
+                }
+                return <Badge key={col.id} variant="light" color="gray" size="sm">{col.name}: {rawVal}</Badge>;
               })}
             </Group>
           </Group>
@@ -377,6 +516,9 @@ const DatabaseKanbanView = ({ rows, visibleColumns, columns, currentView, update
               >
                 <Group justify="space-between" mb="md" px="xs">
                   <Group gap="xs">
+                    {groupCol && getOptionColor(groupCol, group.value) ? (
+                      <Box style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: getOptionColor(groupCol, group.value), flexShrink: 0 }} />
+                    ) : null}
                     <Text fw={700} size="sm">{group.label}</Text>
                     <Badge variant="filled" color="gray" size="xs">
                       {rows.filter((r: any) => {
@@ -694,6 +836,23 @@ export const FullPageDatabase: React.FC<FullPageDatabaseProps> = ({ page, worksp
             case "is_not_empty": return !!val && val !== "[]";
             case "greater_than": return Number(val) > Number(f.value);
             case "less_than": return Number(val) < Number(f.value);
+            case "today": {
+              if (!val) return false;
+              const d = dayjs(String(val));
+              return d.isValid() && d.isSame(dayjs(), 'day');
+            }
+            case "this_week": {
+              if (!val) return false;
+              const d = dayjs(String(val));
+              const startOfWeek = dayjs().startOf('week');
+              const endOfWeek = dayjs().endOf('week');
+              return d.isValid() && !d.isBefore(startOfWeek) && !d.isAfter(endOfWeek);
+            }
+            case "overdue": {
+              if (!val) return false;
+              const d = dayjs(String(val));
+              return d.isValid() && d.isBefore(dayjs().startOf('day'));
+            }
             default: return true;
           }
         });
@@ -747,6 +906,13 @@ export const FullPageDatabase: React.FC<FullPageDatabaseProps> = ({ page, worksp
     const rowPage = workspace.pages[rowPageId]; if (!rowPage) return;
     updatePage(rowPageId, { properties: { ...rowPage.properties, [colId]: String(value) } });
   };
+
+  const bulkSetCheckbox = (colId: string, checked: boolean) => {
+    filteredAndSortedRows.forEach((row: any) => {
+      updatePage(row.id, { properties: { ...row.properties, [colId]: String(checked) } });
+    });
+  };
+
   const updateViews = (newViews: DatabaseView[]) => updatePage(page.id, { databaseViews: newViews });
   const updateCurrentView = (updates: Partial<DatabaseView>) => {
     const newViews = views.map(v => v.id === currentViewId ? { ...v, ...updates } : v); updateViews(newViews);
@@ -766,14 +932,40 @@ export const FullPageDatabase: React.FC<FullPageDatabaseProps> = ({ page, worksp
     return columns.filter(c => currentView.visibleColumnIds?.includes(c.id));
   }, [columns, currentView.visibleColumnIds]);
 
+  // Feature 4: Completion rate
+  const completionStats = useMemo(() => {
+    const checkboxCol = columns.find(c => c.type === 'checkbox');
+    if (!checkboxCol) return null;
+    const total = rawRows.length;
+    if (total === 0) return null;
+    const done = rawRows.filter((r: any) => r.properties?.[checkboxCol.id] === "true").length;
+    return { done, total, pct: Math.round((done / total) * 100) };
+  }, [columns, rawRows]);
+
   return (
     <Box p="xl" style={{ maxWidth: '1200px', margin: '0 auto', flex: 1, paddingBottom: 100 }}>
       {/* Title */}
       <DebouncedInput
         variant="transparent" size="xl" fw={800} value={page.title}
         onChange={(v) => updatePage(page.id, { title: v })}
-        placeholder="Database Title" style={{ fontSize: "2.5rem", marginBottom: "1.5rem", width: "100%" }}
+        placeholder="Database Title" style={{ fontSize: "2.5rem", marginBottom: "0.5rem", width: "100%" }}
       />
+
+      {/* Completion Rate Indicator */}
+      {completionStats && (
+        <Box mb="lg">
+          <Group justify="space-between" mb={4}>
+            <Text size="xs" c="dimmed">完了 {completionStats.done}/{completionStats.total} ({completionStats.pct}%)</Text>
+            {completionStats.pct === 100 && <Text size="xs" c="green" fw={600}>🎉 すべて完了！</Text>}
+          </Group>
+          <Progress
+            value={completionStats.pct}
+            size="sm"
+            radius="xl"
+            color={completionStats.pct === 100 ? "green" : "blue"}
+          />
+        </Box>
+      )}
 
       {/* Control Bar */}
       <Group justify="space-between" mb="md">
@@ -848,19 +1040,77 @@ export const FullPageDatabase: React.FC<FullPageDatabaseProps> = ({ page, worksp
              </Menu.Dropdown>
           </Menu>
 
-          <Menu shadow="md" width={320} closeOnItemClick={false}>
+          <Menu shadow="md" width={360} closeOnItemClick={false}>
             <Menu.Target><Button variant="subtle" color="gray" size="xs" leftSection={<IconFilter size={14}/>}>フィルター {currentView.filters?.length > 0 && <Badge size="xs" ml={4}>{currentView.filters.length}</Badge>}</Button></Menu.Target>
             <Menu.Dropdown p="sm">
               <Text fw={700} size="xs" mb="xs">フィルター設定</Text>
-              <Stack gap="xs">
-                {(currentView.filters || []).map((f, i) => (
-                  <Group key={f.id} gap="xs" wrap="nowrap">
-                    <MantineSelect size="xs" style={{ width: 100 }} data={[{ id: "title", name: "タイトル" }, ...columns].map(c => ({ label: c.name, value: c.id }))} value={f.columnId} onChange={v => updateCurrentView({ filters: currentView.filters.map((filter, idx) => idx === i ? { ...filter, columnId: v || "title" } : filter) })} />
-                    <MantineSelect size="xs" style={{ width: 100 }} data={[{ label: "含む", value: "contains" }, { label: "含まない", value: "not_contains" }, { label: "等しい", value: "equals" }, { label: "等しくない", value: "not_equals" }, { label: "> より大", value: "greater_than" }, { label: "< より小", value: "less_than" },{ label: "空", value: "is_empty" }, { label: "非空", value: "is_not_empty" }]} value={f.operator} onChange={v => updateCurrentView({ filters: currentView.filters.map((filter, idx) => idx === i ? { ...filter, operator: v as DatabaseFilterOperator } : filter) })} />
-                    <DebouncedInput size="xs" style={{ flex: 1 }} value={f.value} onChange={v => updateCurrentView({ filters: currentView.filters.map((filter, idx) => idx === i ? { ...filter, value: v } : filter) })} />
-                    <ActionIcon color="red" variant="subtle" size="xs" onClick={() => updateCurrentView({ filters: currentView.filters.filter((_, idx) => idx !== i) })}><IconTrash size={12}/></ActionIcon>
+              {/* Quick date filter presets */}
+              {columns.some(c => c.type === 'date') && (
+                <>
+                  <Text size="xs" c="dimmed" mb={4}>日付クイックフィルター</Text>
+                  <Group gap={4} mb="xs" wrap="wrap">
+                    {[
+                      { label: "今日", operator: "today" as DatabaseFilterOperator },
+                      { label: "今週", operator: "this_week" as DatabaseFilterOperator },
+                      { label: "期限超過", operator: "overdue" as DatabaseFilterOperator },
+                    ].map(({ label, operator }) => {
+                      const dateCol = columns.find(c => c.type === 'date');
+                      const isActive = currentView.filters?.some(f => f.columnId === dateCol?.id && f.operator === operator);
+                      return (
+                        <Button
+                          key={operator}
+                          size="compact-xs"
+                          variant={isActive ? "filled" : "light"}
+                          color={operator === "overdue" ? "red" : "blue"}
+                          onClick={() => {
+                            if (!dateCol) return;
+                            const existing = currentView.filters || [];
+                            if (isActive) {
+                              updateCurrentView({ filters: existing.filter(f => !(f.columnId === dateCol.id && f.operator === operator)) });
+                            } else {
+                              updateCurrentView({ filters: [...existing, { id: Date.now().toString(), columnId: dateCol.id, operator, value: "" }] });
+                            }
+                          }}
+                        >
+                          {label}
+                        </Button>
+                      );
+                    })}
                   </Group>
-                ))}
+                  <Menu.Divider />
+                </>
+              )}
+              <Stack gap="xs">
+                {(currentView.filters || []).map((f, i) => {
+                  const selectedCol = columns.find(c => c.id === f.columnId);
+                  const isDateCol = selectedCol?.type === 'date';
+                  const operatorOptions = [
+                    { label: "含む", value: "contains" },
+                    { label: "含まない", value: "not_contains" },
+                    { label: "等しい", value: "equals" },
+                    { label: "等しくない", value: "not_equals" },
+                    { label: "> より大", value: "greater_than" },
+                    { label: "< より小", value: "less_than" },
+                    { label: "空", value: "is_empty" },
+                    { label: "非空", value: "is_not_empty" },
+                    ...(isDateCol ? [
+                      { label: "今日", value: "today" },
+                      { label: "今週", value: "this_week" },
+                      { label: "期限超過", value: "overdue" },
+                    ] : []),
+                  ];
+                  const needsValue = !["is_empty", "is_not_empty", "today", "this_week", "overdue"].includes(f.operator);
+                  return (
+                    <Group key={f.id} gap="xs" wrap="nowrap">
+                      <MantineSelect size="xs" style={{ width: 100 }} data={[{ id: "title", name: "タイトル" }, ...columns].map(c => ({ label: c.name, value: c.id }))} value={f.columnId} onChange={v => updateCurrentView({ filters: currentView.filters.map((filter, idx) => idx === i ? { ...filter, columnId: v || "title" } : filter) })} />
+                      <MantineSelect size="xs" style={{ width: 110 }} data={operatorOptions} value={f.operator} onChange={v => updateCurrentView({ filters: currentView.filters.map((filter, idx) => idx === i ? { ...filter, operator: v as DatabaseFilterOperator } : filter) })} />
+                      {needsValue && (
+                        <DebouncedInput size="xs" style={{ flex: 1 }} value={f.value} onChange={v => updateCurrentView({ filters: currentView.filters.map((filter, idx) => idx === i ? { ...filter, value: v } : filter) })} />
+                      )}
+                      <ActionIcon color="red" variant="subtle" size="xs" onClick={() => updateCurrentView({ filters: currentView.filters.filter((_, idx) => idx !== i) })}><IconTrash size={12}/></ActionIcon>
+                    </Group>
+                  );
+                })}
                 <Button variant="light" size="xs" leftSection={<IconPlus size={14}/>} onClick={() => updateCurrentView({ filters: [...(currentView.filters || []), { id: Date.now().toString(), columnId: "title", operator: "contains", value: "" }] })}>追加</Button>
               </Stack>
             </Menu.Dropdown>
