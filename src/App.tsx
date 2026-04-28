@@ -873,6 +873,8 @@ function App() {
   const [importShareKey, setImportShareKey] = useState("");
   const [isImportingShare, setIsImportingShare] = useState(false);
   const [importShareError, setImportShareError] = useState<string | null>(null);
+  const [pendingImportedWorkspace, setPendingImportedWorkspace] =
+    useState<{ workspace: Workspace; gasUrl: string; spreadsheetRef: string; shareKey: string } | null>(null);
   const [commandQuery, setCommandQuery] = useState("");
   const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
 
@@ -1925,33 +1927,14 @@ function App() {
           throw new Error("共有データの形式が不正です。");
         }
 
-        const merge = window.confirm(
-          "インポート方法を選択してください。\n" +
-            "OK: 現在のワークスペースにマージ（ページを追加）\n" +
-            "キャンセル: 現在のワークスペースを上書き",
-        );
-        if (merge) {
-          setWorkspace((prev) => mergeWorkspaces(prev, imported));
-        } else {
-          const confirmed = window.confirm(
-            "現在のワークスペースを上書きします。この操作は元に戻せません。続行しますか？",
-          );
-          if (!confirmed) return;
-          setWorkspace(imported);
-          setShowTrash(false);
-        }
-
-        const now = Date.now();
-        setLastImportedShare({
+        // Open the import-choice modal instead of using confirm dialogs.
+        setPendingImportedWorkspace({
+          workspace: imported,
           gasUrl: trimmedGasUrl,
           spreadsheetRef: trimmedRef,
           shareKey: trimmedKey,
-          importedAt: now,
         });
         setIsImportShareModalOpen(false);
-        setImportShareGasUrl("");
-        setImportShareSpreadsheetRef("");
-        setImportShareKey("");
       } catch (error) {
         setImportShareError(
           error instanceof Error ? error.message : "インポートに失敗しました。",
@@ -1961,6 +1944,31 @@ function App() {
       }
     },
     [],
+  );
+
+  const applyImportedShare = useCallback(
+    (mergeMode: boolean) => {
+      if (!pendingImportedWorkspace) return;
+      const { workspace: imported, gasUrl, spreadsheetRef, shareKey } =
+        pendingImportedWorkspace;
+      if (mergeMode) {
+        setWorkspace((prev) => mergeWorkspaces(prev, imported));
+      } else {
+        setWorkspace(imported);
+        setShowTrash(false);
+      }
+      setLastImportedShare({
+        gasUrl,
+        spreadsheetRef,
+        shareKey,
+        importedAt: Date.now(),
+      });
+      setImportShareGasUrl("");
+      setImportShareSpreadsheetRef("");
+      setImportShareKey("");
+      setPendingImportedWorkspace(null);
+    },
+    [pendingImportedWorkspace],
   );
 
   const handleRefreshImportedShare = useCallback(async () => {
