@@ -2316,7 +2316,7 @@ function App() {
           {!isSidebarCollapsed ? (
             <>
               <div className="sidebar-header">
-                <h1>Memo Polycanva</h1>
+                <h1>メモ帳</h1>
                 <div className="sidebar-toolbar">
                   <div className="button-group">
                     <button type="button" onClick={() => addPage(null)} title="ページ作成">
