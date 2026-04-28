@@ -742,6 +742,92 @@ kbd {
   font-size: 0.76rem;
 }
 
+/* ===== Sharing Feature ===== */
+
+.share-panel {
+  border: 1px solid #e5e9f0;
+  border-radius: var(--sidebar-radius);
+  padding: var(--sidebar-space);
+}
+
+.share-publish-section,
+.share-import-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.share-publish-section + .share-import-section {
+  border-top: 1px dashed #d0d7e2;
+  padding-top: 10px;
+  margin-top: 2px;
+}
+
+.share-section-label {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.share-info-row {
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.share-info-label {
+  font-size: 0.72rem;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.share-info-input {
+  border: 1px solid #d0d7e2;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 0.74rem;
+  background: #f8fafc;
+  color: #374151;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.share-copy-button {
+  padding: 4px 6px !important;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.import-share-modal {
+  width: min(480px, 92vw);
+}
+
+.import-share-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.import-share-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 0.8rem;
+  color: #4b5563;
+}
+
+.import-share-fields input {
+  border: 1px solid #d0d7e2;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+}
+
 .editor-custom-style .bn-editor h1 {
   font-size: 24px;
 }
@@ -988,6 +1074,34 @@ kbd {
   }
 
   .sync-template-code {
+    border-color: #4a4f57;
+    background: #2c2d32;
+    color: #c1c2c5;
+  }
+
+  .share-panel {
+    border-color: #373a40;
+  }
+
+  .share-section-label {
+    color: #adb5bd;
+  }
+
+  .share-publish-section + .share-import-section {
+    border-top-color: #4a4f57;
+  }
+
+  .share-info-input {
+    border-color: #4a4f57;
+    background: #2c2d32;
+    color: #c1c2c5;
+  }
+
+  .import-share-fields label {
+    color: #adb5bd;
+  }
+
+  .import-share-fields input {
     border-color: #4a4f57;
     background: #2c2d32;
     color: #c1c2c5;

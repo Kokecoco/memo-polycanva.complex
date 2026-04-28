@@ -103,6 +103,28 @@ interface CloudRecord {
   deviceId: string;
 }
 
+interface ShareSettings {
+  shareKey: string;
+  publishedAt: number | null;
+}
+
+interface ImportedShare {
+  gasUrl: string;
+  spreadsheetRef: string;
+  shareKey: string;
+  importedAt: number;
+}
+
+interface ShareFetchApiResponse {
+  ok: boolean;
+  message?: string;
+  data?: {
+    workspaceJson?: string;
+    publishedAt?: number;
+    publisherDeviceId?: string;
+  } | null;
+}
+
 interface SyncApiResponse {
   ok: boolean;
   message?: string;
@@ -131,6 +153,8 @@ const DB_VERSION = 1;
 const STORE_NAME = "workspace";
 const STORE_KEY = "default";
 const SYNC_SETTINGS_STORAGE_KEY = "memo-polycanva.sync-settings";
+const SHARE_SETTINGS_STORAGE_KEY = "memo-polycanva.share-settings";
+const LAST_IMPORTED_SHARE_KEY = "memo-polycanva.last-imported-share";
 const SYNC_DEBOUNCE_MS = 1800;
 const MAX_SYNC_JSON_BYTES = 900000;
 const SYNC_CONFLICT_PROMPT_MESSAGE =
@@ -351,6 +375,151 @@ async function callSyncApiSave(
   });
 
   return parseSyncResponse(response);
+}
+
+function createDefaultShareSettings(): ShareSettings {
+  return { shareKey: "", publishedAt: null };
+}
+
+function normalizeShareSettings(value: unknown): ShareSettings {
+  if (!value || typeof value !== "object") {
+    return createDefaultShareSettings();
+  }
+  const candidate = value as Partial<ShareSettings>;
+  return {
+    shareKey:
+      typeof candidate.shareKey === "string" ? candidate.shareKey : "",
+    publishedAt:
+      typeof candidate.publishedAt === "number" &&
+      Number.isFinite(candidate.publishedAt)
+        ? candidate.publishedAt
+        : null,
+  };
+}
+
+async function callSyncApiPublish(
+  gasUrl: string,
+  spreadsheetRef: string,
+  shareKey: string,
+  workspaceJson: string,
+  deviceId: string,
+): Promise<SyncApiResponse> {
+  const spreadsheetId = extractSpreadsheetId(spreadsheetRef);
+  const jsonBytes = new TextEncoder().encode(workspaceJson).length;
+  if (jsonBytes > MAX_SYNC_JSON_BYTES) {
+    return {
+      ok: false,
+      message: `共有データサイズが大きすぎます（${Math.round(jsonBytes / 1024)}KB）。`,
+    };
+  }
+  const endpoint = getSyncApiEndpoint(gasUrl);
+  if (!endpoint) {
+    return { ok: false, message: "同期先URLが不正です。" };
+  }
+  const response = await fetch(endpoint.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({
+      action: "publish",
+      shareKey,
+      spreadsheetId,
+      publisherDeviceId: deviceId,
+      workspaceJson,
+    }),
+  });
+  return parseSyncResponse(response);
+}
+
+async function callSyncApiFetchShare(
+  gasUrl: string,
+  spreadsheetRef: string,
+  shareKey: string,
+): Promise<ShareFetchApiResponse> {
+  const spreadsheetId = extractSpreadsheetId(spreadsheetRef);
+  const endpoint = getSyncApiEndpoint(gasUrl);
+  if (!endpoint) {
+    return { ok: false, message: "同期先URLが不正です。" };
+  }
+  endpoint.searchParams.set("action", "fetch_share");
+  endpoint.searchParams.set("shareKey", shareKey.trim());
+  endpoint.searchParams.set("spreadsheetId", spreadsheetId);
+  const response = await fetch(endpoint.toString(), {
+    method: "GET",
+    cache: "no-store",
+  });
+  const raw = await response.text();
+  try {
+    return JSON.parse(raw) as ShareFetchApiResponse;
+  } catch {
+    return {
+      ok: false,
+      message: raw || "サーバー応答がJSONではありません。",
+    };
+  }
+}
+
+async function callSyncApiDeleteShare(
+  gasUrl: string,
+  spreadsheetRef: string,
+  shareKey: string,
+): Promise<SyncApiResponse> {
+  const spreadsheetId = extractSpreadsheetId(spreadsheetRef);
+  const endpoint = getSyncApiEndpoint(gasUrl);
+  if (!endpoint) {
+    return { ok: false, message: "同期先URLが不正です。" };
+  }
+  const response = await fetch(endpoint.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({
+      action: "delete_share",
+      shareKey,
+      spreadsheetId,
+    }),
+  });
+  return parseSyncResponse(response);
+}
+
+function mergeWorkspaces(current: Workspace, imported: Workspace): Workspace {
+  // Build an ID remapping table to avoid collisions with existing page IDs.
+  const idMap = new Map<string, string>();
+  for (const id of Object.keys(imported.pages)) {
+    if (current.pages[id]) {
+      const newId =
+        globalThis.crypto?.randomUUID?.() ??
+        `imported-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      idMap.set(id, newId);
+    } else {
+      idMap.set(id, id);
+    }
+  }
+
+  const newPages: Record<string, MemoPage> = { ...current.pages };
+  for (const [id, page] of Object.entries(imported.pages)) {
+    const newId = idMap.get(id)!;
+    newPages[newId] = {
+      ...page,
+      id: newId,
+      parentId:
+        page.parentId != null
+          ? (idMap.get(page.parentId) ?? page.parentId)
+          : null,
+      childrenIds: page.childrenIds.map((cid) => idMap.get(cid) ?? cid),
+    };
+  }
+
+  const newRootIds = [
+    ...current.rootPageIds,
+    ...imported.rootPageIds
+      .map((id) => idMap.get(id) ?? id)
+      .filter((id) => !current.rootPageIds.includes(id)),
+  ];
+
+  return {
+    pages: newPages,
+    rootPageIds: newRootIds,
+    selectedPageId: current.selectedPageId,
+  };
 }
 
 function createPage(
@@ -665,6 +834,45 @@ function App() {
   const [syncGuideCopyMessage, setSyncGuideCopyMessage] = useState<
     string | null
   >(null);
+  const [shareSettings, setShareSettings] = useState<ShareSettings>(() => {
+    try {
+      const raw = localStorage.getItem(SHARE_SETTINGS_STORAGE_KEY);
+      if (!raw) return createDefaultShareSettings();
+      return normalizeShareSettings(JSON.parse(raw));
+    } catch {
+      return createDefaultShareSettings();
+    }
+  });
+  const [lastImportedShare, setLastImportedShare] =
+    useState<ImportedShare | null>(() => {
+      try {
+        const raw = localStorage.getItem(LAST_IMPORTED_SHARE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as ImportedShare;
+        if (
+          parsed &&
+          typeof parsed.gasUrl === "string" &&
+          typeof parsed.shareKey === "string" &&
+          typeof parsed.spreadsheetRef === "string"
+        ) {
+          return parsed;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    });
+  const [isPublishingShare, setIsPublishingShare] = useState(false);
+  const [sharePublishError, setSharePublishError] = useState<string | null>(
+    null,
+  );
+  const [isImportShareModalOpen, setIsImportShareModalOpen] = useState(false);
+  const [importShareGasUrl, setImportShareGasUrl] = useState("");
+  const [importShareSpreadsheetRef, setImportShareSpreadsheetRef] =
+    useState("");
+  const [importShareKey, setImportShareKey] = useState("");
+  const [isImportingShare, setIsImportingShare] = useState(false);
+  const [importShareError, setImportShareError] = useState<string | null>(null);
   const [commandQuery, setCommandQuery] = useState("");
   const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
 
@@ -715,6 +923,32 @@ function App() {
       );
     }
   }, [syncSettings]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        SHARE_SETTINGS_STORAGE_KEY,
+        JSON.stringify(shareSettings),
+      );
+    } catch {
+      // ignore
+    }
+  }, [shareSettings]);
+
+  useEffect(() => {
+    try {
+      if (lastImportedShare) {
+        localStorage.setItem(
+          LAST_IMPORTED_SHARE_KEY,
+          JSON.stringify(lastImportedShare),
+        );
+      } else {
+        localStorage.removeItem(LAST_IMPORTED_SHARE_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  }, [lastImportedShare]);
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
@@ -1582,6 +1816,161 @@ function App() {
     setIsSyncGuideOpen(false);
     setSyncGuideCopyMessage(null);
   }, []);
+
+  const handlePublishShare = useCallback(
+    async (updateExisting = false) => {
+      if (!isSyncConfigured(syncSettings)) {
+        setSharePublishError(
+          "同期設定（GAS URL・スプレッドシート）を先に完了してください。",
+        );
+        return;
+      }
+      setIsPublishingShare(true);
+      setSharePublishError(null);
+      try {
+        const shareKey =
+          updateExisting && shareSettings.shareKey
+            ? shareSettings.shareKey
+            : (globalThis.crypto?.randomUUID?.() ??
+              `share-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+        const workspaceJson = JSON.stringify(workspaceRef.current);
+        const response = await callSyncApiPublish(
+          syncSettings.gasUrl,
+          syncSettings.spreadsheetRef,
+          shareKey,
+          workspaceJson,
+          syncSettings.deviceId,
+        );
+        if (!response.ok) {
+          throw new Error(response.message ?? "共有の発行に失敗しました。");
+        }
+        setShareSettings({ shareKey, publishedAt: Date.now() });
+      } catch (error) {
+        setSharePublishError(
+          error instanceof Error ? error.message : "共有の発行に失敗しました。",
+        );
+      } finally {
+        setIsPublishingShare(false);
+      }
+    },
+    [syncSettings, shareSettings.shareKey],
+  );
+
+  const handleDeleteShare = useCallback(async () => {
+    if (!shareSettings.shareKey) return;
+    const accepted = window.confirm(
+      "共有を取り消します。共有キーで取得したデータは相手の手元に残ります。続行しますか？",
+    );
+    if (!accepted) return;
+    setIsPublishingShare(true);
+    setSharePublishError(null);
+    try {
+      const response = await callSyncApiDeleteShare(
+        syncSettings.gasUrl,
+        syncSettings.spreadsheetRef,
+        shareSettings.shareKey,
+      );
+      if (!response.ok) {
+        throw new Error(response.message ?? "共有の取り消しに失敗しました。");
+      }
+      setShareSettings(createDefaultShareSettings());
+    } catch (error) {
+      setSharePublishError(
+        error instanceof Error
+          ? error.message
+          : "共有の取り消しに失敗しました。",
+      );
+    } finally {
+      setIsPublishingShare(false);
+    }
+  }, [syncSettings, shareSettings.shareKey]);
+
+  const handleImportShare = useCallback(
+    async (gasUrl: string, spreadsheetRef: string, shareKey: string) => {
+      const trimmedGasUrl = gasUrl.trim();
+      const trimmedRef = spreadsheetRef.trim();
+      const trimmedKey = shareKey.trim();
+      if (!trimmedGasUrl) {
+        setImportShareError("GAS URLを入力してください。");
+        return;
+      }
+      if (!trimmedRef) {
+        setImportShareError("スプレッドシートURLまたはIDを入力してください。");
+        return;
+      }
+      if (!trimmedKey) {
+        setImportShareError("共有キーを入力してください。");
+        return;
+      }
+      setIsImportingShare(true);
+      setImportShareError(null);
+      try {
+        const response = await callSyncApiFetchShare(
+          trimmedGasUrl,
+          trimmedRef,
+          trimmedKey,
+        );
+        if (!response.ok) {
+          throw new Error(
+            response.message ?? "共有データの取得に失敗しました。",
+          );
+        }
+        if (!response.data?.workspaceJson) {
+          throw new Error("共有データが見つかりませんでした。");
+        }
+        const imported = normalizeWorkspace(
+          JSON.parse(response.data.workspaceJson),
+        );
+        if (!imported) {
+          throw new Error("共有データの形式が不正です。");
+        }
+
+        const merge = window.confirm(
+          "インポート方法を選択してください。\n" +
+            "OK: 現在のワークスペースにマージ（ページを追加）\n" +
+            "キャンセル: 現在のワークスペースを上書き",
+        );
+        if (merge) {
+          setWorkspace((prev) => mergeWorkspaces(prev, imported));
+        } else {
+          const confirmed = window.confirm(
+            "現在のワークスペースを上書きします。この操作は元に戻せません。続行しますか？",
+          );
+          if (!confirmed) return;
+          setWorkspace(imported);
+          setShowTrash(false);
+        }
+
+        const now = Date.now();
+        setLastImportedShare({
+          gasUrl: trimmedGasUrl,
+          spreadsheetRef: trimmedRef,
+          shareKey: trimmedKey,
+          importedAt: now,
+        });
+        setIsImportShareModalOpen(false);
+        setImportShareGasUrl("");
+        setImportShareSpreadsheetRef("");
+        setImportShareKey("");
+      } catch (error) {
+        setImportShareError(
+          error instanceof Error ? error.message : "インポートに失敗しました。",
+        );
+      } finally {
+        setIsImportingShare(false);
+      }
+    },
+    [],
+  );
+
+  const handleRefreshImportedShare = useCallback(async () => {
+    if (!lastImportedShare) return;
+    await handleImportShare(
+      lastImportedShare.gasUrl,
+      lastImportedShare.spreadsheetRef,
+      lastImportedShare.shareKey,
+    );
+  }, [lastImportedShare, handleImportShare]);
 
   useEffect(() => {
     if (!syncGuideCopyMessage) {
@@ -2638,6 +3027,168 @@ function App() {
                   </div>
                 </details>
               </section>
+
+              <section className="sidebar-section share-panel">
+                <details className="sidebar-accordion">
+                  <summary>共有機能</summary>
+                  <div className="accordion-panel">
+                    <div className="share-publish-section">
+                      <p className="share-section-label">共有を発行</p>
+                      {!syncConfigured ? (
+                        <p className="muted">
+                          同期設定（GAS URL・スプレッドシート）を先に完了してください。
+                        </p>
+                      ) : shareSettings.shareKey ? (
+                        <>
+                          <p className="muted">
+                            発行済み:{" "}
+                            {shareSettings.publishedAt
+                              ? formatDateTime(shareSettings.publishedAt)
+                              : "不明"}
+                          </p>
+                          <div className="share-info-row">
+                            <span className="share-info-label">共有キー</span>
+                            <input
+                              type="text"
+                              readOnly
+                              value={shareSettings.shareKey}
+                              className="share-info-input"
+                              aria-label="共有キー"
+                            />
+                            <button
+                              type="button"
+                              className="share-copy-button"
+                              title="コピー"
+                              onClick={() =>
+                                void navigator.clipboard
+                                  .writeText(shareSettings.shareKey)
+                                  .catch(() => undefined)
+                              }
+                            >
+                              📋
+                            </button>
+                          </div>
+                          <div className="share-info-row">
+                            <span className="share-info-label">GAS URL</span>
+                            <input
+                              type="text"
+                              readOnly
+                              value={syncSettings.gasUrl}
+                              className="share-info-input"
+                              aria-label="GAS URL"
+                            />
+                            <button
+                              type="button"
+                              className="share-copy-button"
+                              title="コピー"
+                              onClick={() =>
+                                void navigator.clipboard
+                                  .writeText(syncSettings.gasUrl)
+                                  .catch(() => undefined)
+                              }
+                            >
+                              📋
+                            </button>
+                          </div>
+                          <div className="share-info-row">
+                            <span className="share-info-label">スプシ</span>
+                            <input
+                              type="text"
+                              readOnly
+                              value={syncSettings.spreadsheetRef}
+                              className="share-info-input"
+                              aria-label="スプレッドシートURL/ID"
+                            />
+                            <button
+                              type="button"
+                              className="share-copy-button"
+                              title="コピー"
+                              onClick={() =>
+                                void navigator.clipboard
+                                  .writeText(syncSettings.spreadsheetRef)
+                                  .catch(() => undefined)
+                              }
+                            >
+                              📋
+                            </button>
+                          </div>
+                          <div className="sync-actions">
+                            <button
+                              type="button"
+                              disabled={isPublishingShare}
+                              onClick={() => void handlePublishShare(true)}
+                            >
+                              {isPublishingShare
+                                ? "処理中..."
+                                : "共有を更新（再公開）"}
+                            </button>
+                            <button
+                              type="button"
+                              className="danger"
+                              disabled={isPublishingShare}
+                              onClick={() => void handleDeleteShare()}
+                            >
+                              共有を取り消す
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="sync-actions">
+                          <button
+                            type="button"
+                            disabled={isPublishingShare}
+                            onClick={() => void handlePublishShare(false)}
+                          >
+                            {isPublishingShare
+                              ? "発行中..."
+                              : "このワークスペースを共有する"}
+                          </button>
+                        </div>
+                      )}
+                      {sharePublishError ? (
+                        <p className="muted sync-error">{sharePublishError}</p>
+                      ) : null}
+                    </div>
+
+                    <div className="share-import-section">
+                      <p className="share-section-label">他のユーザーの共有をインポート</p>
+                      {lastImportedShare ? (
+                        <>
+                          <p className="muted">
+                            最終インポート:{" "}
+                            {formatDateTime(lastImportedShare.importedAt)}
+                          </p>
+                          <div className="sync-actions">
+                            <button
+                              type="button"
+                              disabled={isImportingShare}
+                              onClick={() => void handleRefreshImportedShare()}
+                            >
+                              {isImportingShare ? "取得中..." : "最新を再取得"}
+                            </button>
+                            <button
+                              type="button"
+                              className="danger"
+                              onClick={() => setLastImportedShare(null)}
+                            >
+                              インポート情報をクリア
+                            </button>
+                          </div>
+                        </>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImportShareError(null);
+                          setIsImportShareModalOpen(true);
+                        }}
+                      >
+                        共有からインポート...
+                      </button>
+                    </div>
+                  </div>
+                </details>
+              </section>
             </>
           ) : (
             <div className="sidebar-icon-actions">
@@ -3017,6 +3568,85 @@ function App() {
                   onClick={() => setIsSidebarToolsOpen(false)}
                 >
                   閉じる
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {isImportShareModalOpen ? (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onClick={() => setIsImportShareModalOpen(false)}
+          >
+            <div
+              className="modal-panel import-share-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="import-share-dialog-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h3 id="import-share-dialog-title">共有からインポート</h3>
+              <p className="muted">
+                共有者から受け取ったGAS URL・スプレッドシートURL/ID・共有キーを入力してください。
+              </p>
+              <div className="import-share-fields">
+                <label>
+                  発行者のGAS WebアプリURL
+                  <input
+                    type="url"
+                    value={importShareGasUrl}
+                    onChange={(event) =>
+                      setImportShareGasUrl(event.target.value)
+                    }
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                    autoFocus
+                  />
+                </label>
+                <label>
+                  発行者のスプレッドシートURLまたはID
+                  <input
+                    type="text"
+                    value={importShareSpreadsheetRef}
+                    onChange={(event) =>
+                      setImportShareSpreadsheetRef(event.target.value)
+                    }
+                    placeholder="https://docs.google.com/spreadsheets/d/... または ID"
+                  />
+                </label>
+                <label>
+                  共有キー
+                  <input
+                    type="text"
+                    value={importShareKey}
+                    onChange={(event) => setImportShareKey(event.target.value)}
+                    placeholder="発行者から受け取った共有キー"
+                  />
+                </label>
+              </div>
+              {importShareError ? (
+                <p className="muted sync-error">{importShareError}</p>
+              ) : null}
+              <div className="sync-actions">
+                <button
+                  type="button"
+                  disabled={isImportingShare}
+                  onClick={() =>
+                    void handleImportShare(
+                      importShareGasUrl,
+                      importShareSpreadsheetRef,
+                      importShareKey,
+                    )
+                  }
+                >
+                  {isImportingShare ? "インポート中..." : "インポート"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsImportShareModalOpen(false)}
+                >
+                  キャンセル
                 </button>
               </div>
             </div>
