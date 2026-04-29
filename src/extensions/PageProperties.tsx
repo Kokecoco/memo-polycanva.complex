@@ -9,10 +9,20 @@ import { DebouncedInput } from "./DebouncedInput";
 import type { DatabaseColumn, DatabaseColumnType } from "../App";
 import dayjs from "dayjs";
 
+type DatabasePageLike = {
+  id: string;
+  title: string;
+  properties?: Record<string, string>;
+};
+
+type DatabaseParentLike = {
+  databaseColumns?: Array<DatabaseColumn | string>;
+};
+
 interface PagePropertiesProps {
-  page: any;
-  parentDatabase: any;
-  updatePage: (pageId: string, updates: any) => void;
+  page: DatabasePageLike;
+  parentDatabase: DatabaseParentLike;
+  updatePage: (pageId: string, updates: { properties?: Record<string, string> }) => void;
 }
 
 const getIconForType = (type: DatabaseColumnType) => {
@@ -27,7 +37,7 @@ const getIconForType = (type: DatabaseColumnType) => {
   }
 };
 
-const calculateFormula = (row: any, col: DatabaseColumn, columns: DatabaseColumn[], visited = new Set<string>()) => {
+const calculateFormula = (row: DatabasePageLike, col: DatabaseColumn, columns: DatabaseColumn[], visited = new Set<string>()) => {
     if (!col.formula || visited.has(col.id)) return "Circular!";
     visited.add(col.id);
   
@@ -47,7 +57,7 @@ const calculateFormula = (row: any, col: DatabaseColumn, columns: DatabaseColumn
     });
   
     try {
-      const result = eval(expression);
+      const result = Function(`"use strict"; return (${expression});`)();
       return String(result);
     } catch {
       return "Error";
@@ -57,11 +67,11 @@ const calculateFormula = (row: any, col: DatabaseColumn, columns: DatabaseColumn
 };
 
 export const PageProperties: React.FC<PagePropertiesProps> = ({ page, parentDatabase, updatePage }) => {
-  const columns = (parentDatabase.databaseColumns || []).map((col: any) => 
+  const columns = (parentDatabase.databaseColumns || []).map((col) => 
     typeof col === "string" ? { id: col, name: col, type: "text" } : col
   ) as DatabaseColumn[];
 
-  const updateValue = (colId: string, value: any) => {
+  const updateValue = (colId: string, value: string | boolean) => {
     updatePage(page.id, { 
       properties: { ...page.properties, [colId]: String(value) } 
     });

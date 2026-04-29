@@ -18,8 +18,9 @@ import { CustomEditor } from "./extensions/CustomEditor.tsx";
 import { FullPageDatabase } from "./extensions/FullPageDatabase.tsx";
 import { PageProperties } from "./extensions/PageProperties.tsx";
 import { registry } from "./extensions/registry";
-import type { ActionLocation } from "./extensions/registry";
+import type { ActionLocation, AppAction } from "./extensions/registry";
 import { useRegisterBuiltInActions } from "./extensions/BuiltInActions";
+import { TableOfContents } from "./extensions/TableOfContents";
 
 
 type PageId = string;
@@ -82,12 +83,14 @@ interface MemoPage {
   databaseViews?: DatabaseView[];
   currentViewId?: string;
   properties?: Record<string, string>;
+  shareSettings?: ShareSettings;
 }
 
 interface Workspace {
   pages: Record<PageId, MemoPage>;
   rootPageIds: PageId[];
   selectedPageId: PageId;
+  shareSettings?: ShareSettings;
 }
 
 interface SyncSettings {
@@ -95,6 +98,17 @@ interface SyncSettings {
   spreadsheetRef: string;
   syncKey: string;
   deviceId: string;
+}
+
+type ShareScope = "page" | "workspace";
+type SharePermissions = "viewer" | "editor";
+
+interface ShareSettings {
+  shareKey: string;
+  scope: ShareScope;
+  permissions: SharePermissions;
+  createdAt: number;
+  updatedAt: number;
 }
 
 interface CloudRecord {
@@ -113,10 +127,29 @@ interface SyncApiResponse {
   } | null;
 }
 
+interface ShareRecord {
+  shareKey: string;
+  type: ShareScope;
+  pageId?: string;
+  data: string;
+  permissions: SharePermissions;
+  updatedAt?: number;
+}
+
+interface ShareApiResponse {
+  ok: boolean;
+  message?: string;
+  data?: ShareRecord | null;
+}
+
 type ContextMenuTarget =
   | { kind: "page"; pageId: PageId }
   | { kind: "sidebar" }
   | { kind: "editor"; pageId: PageId | null };
+
+type CommandPaletteResult =
+  | { kind: "action"; data: AppAction }
+  | { kind: "page"; data: MemoPage };
 
 interface ContextMenuState {
   target: ContextMenuTarget;
@@ -173,6 +206,69 @@ function createDefaultSyncSettings(): SyncSettings {
     syncKey: "",
     deviceId: globalThis.crypto?.randomUUID?.() ?? fallbackDeviceId,
   };
+}
+
+function generateShareKey(scope: ShareScope): string {
+  const prefix = scope === "page" ? "page-" : "workspace-";
+  const fallbackId = `${Date.now()}-${Math.round((globalThis.performance?.now?.() ?? 0) * 1000)}-${fallbackIdCounter++}`;
+  return `${prefix}${globalThis.crypto?.randomUUID?.() ?? fallbackId}`;
+}
+
+function normalizeShareSettings(value: unknown): ShareSettings | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const candidate = value as Partial<ShareSettings>;
+  const scope =
+    candidate.scope === "page"
+      ? "page"
+      : candidate.scope === "workspace"
+        ? "workspace"
+        : null;
+  const permissions =
+    candidate.permissions === "editor"
+      ? "editor"
+      : candidate.permissions === "viewer"
+        ? "viewer"
+        : null;
+  const shareKey =
+    typeof candidate.shareKey === "string" ? candidate.shareKey.trim() : "";
+  const createdAt =
+    typeof candidate.createdAt === "number" && Number.isFinite(candidate.createdAt)
+      ? candidate.createdAt
+      : Date.now();
+  const updatedAt =
+    typeof candidate.updatedAt === "number" && Number.isFinite(candidate.updatedAt)
+      ? candidate.updatedAt
+      : createdAt;
+
+  if (!scope || !permissions) {
+    return undefined;
+  }
+
+  return {
+    shareKey: shareKey || generateShareKey(scope),
+    scope,
+    permissions,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function getEffectiveSharePermissions(
+  workspace: Workspace,
+  page: MemoPage | null,
+): SharePermissions {
+  if (workspace.shareSettings?.permissions === "viewer") {
+    return "viewer";
+  }
+
+  if (page?.shareSettings?.permissions === "viewer") {
+    return "viewer";
+  }
+
+  return "editor";
 }
 
 function normalizeSyncSettings(value: unknown): SyncSettings {
@@ -247,6 +343,50 @@ async function parseSyncResponse(response: Response): Promise<SyncApiResponse> {
     return {
       ok: false,
       message: raw || "サーバー応答がJSONではありません。",
+    };
+  }
+}
+
+async function parseShareResponse(response: Response): Promise<ShareApiResponse> {
+  const raw = await response.text();
+  try {
+    const parsed = JSON.parse(raw) as {
+      ok?: unknown;
+      message?: unknown;
+      data?: unknown;
+    };
+    const payload = parsed.data;
+    if (!payload || typeof payload !== "object") {
+      return {
+        ok: parsed.ok === true,
+        message:
+          typeof parsed.message === "string" ? parsed.message : undefined,
+        data: null,
+      };
+    }
+
+    const record = payload as Partial<ShareRecord>;
+    return {
+      ok: parsed.ok === true,
+      message: typeof parsed.message === "string" ? parsed.message : undefined,
+      data: {
+        shareKey:
+          typeof record.shareKey === "string" ? record.shareKey : "",
+        type: record.type === "page" ? "page" : "workspace",
+        pageId: typeof record.pageId === "string" ? record.pageId : undefined,
+        data: typeof record.data === "string" ? record.data : "",
+        permissions: record.permissions === "editor" ? "editor" : "viewer",
+        updatedAt:
+          typeof record.updatedAt === "number" && Number.isFinite(record.updatedAt)
+            ? record.updatedAt
+            : undefined,
+      },
+    };
+  } catch {
+    return {
+      ok: false,
+      message: raw || "サーバー応答がJSONではありません。",
+      data: null,
     };
   }
 }
@@ -351,6 +491,98 @@ async function callSyncApiSave(
   });
 
   return parseSyncResponse(response);
+}
+
+function parseShareKeyFromInput(value: string): string {
+  const input = value.trim();
+  if (!input) {
+    return "";
+  }
+  try {
+    const base = globalThis.location?.origin || "https://example.com";
+    const url = new URL(input, base);
+    return url.searchParams.get("share")?.trim() ?? input;
+  } catch {
+    return input;
+  }
+}
+
+async function callShareApiGet(
+  settings: SyncSettings,
+  shareKeyInput: string,
+): Promise<ShareApiResponse> {
+  const spreadsheetId = extractSpreadsheetId(settings.spreadsheetRef);
+  const endpoint = getSyncApiEndpoint(settings.gasUrl);
+  if (!endpoint) {
+    return {
+      ok: false,
+      message: "同期先URLが不正です。",
+      data: null,
+    };
+  }
+
+  endpoint.searchParams.set("action", "get_share");
+  endpoint.searchParams.set("shareKey", parseShareKeyFromInput(shareKeyInput));
+  endpoint.searchParams.set("spreadsheetId", spreadsheetId);
+
+  const response = await fetch(endpoint.toString(), {
+    method: "GET",
+    cache: "no-store",
+  });
+  return parseShareResponse(response);
+}
+
+async function callShareApiPost(
+  settings: SyncSettings,
+  payload: Record<string, unknown>,
+): Promise<ShareApiResponse> {
+  const spreadsheetId = extractSpreadsheetId(settings.spreadsheetRef);
+  const endpoint = getSyncApiEndpoint(settings.gasUrl);
+  if (!endpoint) {
+    return {
+      ok: false,
+      message: "同期先URLが不正です。",
+      data: null,
+    };
+  }
+
+  const response = await fetch(endpoint.toString(), {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/plain;charset=utf-8",
+    },
+    body: JSON.stringify({
+      spreadsheetId,
+      ...payload,
+    }),
+  });
+
+  return parseShareResponse(response);
+}
+
+function mergeWorkspaces(local: Workspace, incoming: Workspace): Workspace {
+  const mergedPages: Record<PageId, MemoPage> = { ...local.pages };
+
+  for (const [pageId, incomingPage] of Object.entries(incoming.pages)) {
+    const localPage = mergedPages[pageId];
+    if (!localPage || incomingPage.updatedAt > localPage.updatedAt) {
+      mergedPages[pageId] = incomingPage;
+    }
+  }
+
+  const mergedRootPageIds = Array.from(
+    new Set([...local.rootPageIds, ...incoming.rootPageIds]),
+  ).filter((id) => Boolean(mergedPages[id]));
+
+  return {
+    pages: mergedPages,
+    rootPageIds:
+      mergedRootPageIds.length > 0 ? mergedRootPageIds : local.rootPageIds,
+    selectedPageId: mergedPages[local.selectedPageId]
+      ? local.selectedPageId
+      : mergedRootPageIds[0] || incoming.selectedPageId,
+    shareSettings: incoming.shareSettings ?? local.shareSettings,
+  };
 }
 
 function createPage(
@@ -504,6 +736,7 @@ function normalizeWorkspace(value: unknown): Workspace | null {
         typeof page.properties === "object" && page.properties !== null
           ? (page.properties as Record<string, string>)
           : {},
+      shareSettings: normalizeShareSettings(page.shareSettings),
     };
   }
 
@@ -522,6 +755,7 @@ function normalizeWorkspace(value: unknown): Workspace | null {
     pages,
     rootPageIds,
     selectedPageId,
+    shareSettings: normalizeShareSettings(candidate.shareSettings),
   };
 }
 
@@ -665,12 +899,15 @@ function App() {
   const [syncGuideCopyMessage, setSyncGuideCopyMessage] = useState<
     string | null
   >(null);
+  const [shareInput, setShareInput] = useState(() =>
+    parseShareKeyFromInput(globalThis.location?.href || ""),
+  );
+  const [sharePermission, setSharePermission] = useState<SharePermissions>("editor");
+  const [shareMergeMode, setShareMergeMode] = useState<"merge" | "overwrite">("merge");
+  const [shareMessage, setShareMessage] = useState<string | null>(null);
   const [commandQuery, setCommandQuery] = useState("");
   const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
 
-  useEffect(() => {
-    setCommandSelectedIndex(0);
-  }, [commandQuery]);
   const [showTrash, setShowTrash] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -684,6 +921,7 @@ function App() {
   const [selectedPageIds, setSelectedPageIds] = useState<PageId[]>([]);
   const [collapsedPageIds, setCollapsedPageIds] = useState<PageId[]>([]);
   const [draggingPageId, setDraggingPageId] = useState<PageId | null>(null);
+  const [isOutlineOpen, setIsOutlineOpen] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -1558,12 +1796,448 @@ function App() {
 
   const openCommandPalette = useCallback((prefix = "") => {
     setCommandQuery(prefix);
+    setCommandSelectedIndex(0);
     setIsCommandPaletteOpen(true);
     setIsSidebarToolsOpen(false);
     setContextMenu(null);
   }, []);
 
   const selectedPage = workspace.pages[workspace.selectedPageId] ?? null;
+
+  const buildShareUrl = useCallback((shareKey: string) => {
+    const origin = globalThis.location?.origin || "";
+    const pathname = globalThis.location?.pathname || "";
+    return `${origin}${pathname}?share=${encodeURIComponent(shareKey)}`;
+  }, []);
+
+  const currentShareSettings =
+    selectedPage?.shareSettings ?? workspace.shareSettings ?? null;
+  const currentShareLabel = currentShareSettings
+    ? currentShareSettings.scope === "page"
+      ? "ページ共有"
+      : "ワークスペース共有"
+    : "共有なし";
+
+  const createWorkspaceShare = useCallback(async () => {
+    if (!isSyncConfigured(syncSettings)) {
+      setSyncError("同期設定を完了してください。");
+      return;
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+    setShareMessage(null);
+    try {
+      const generated = await callShareApiPost(syncSettings, {
+        action: "generate_share",
+        type: "workspace",
+        permissions: sharePermission,
+      });
+      if (!generated.ok || !generated.data?.shareKey) {
+        throw new Error(generated.message || "共有キーの生成に失敗しました。");
+      }
+
+      const shareKey = generated.data.shareKey;
+      const snapshot = JSON.stringify(workspaceRef.current);
+      const saved = await callShareApiPost(syncSettings, {
+        action: "save_share",
+        shareKey,
+        data: snapshot,
+      });
+      if (!saved.ok) {
+        throw new Error(saved.message || "共有データの保存に失敗しました。");
+      }
+
+      const now = Date.now();
+      setWorkspace((previous) => ({
+        ...previous,
+        shareSettings: {
+          shareKey,
+          scope: "workspace",
+          permissions: sharePermission,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }));
+
+      const shareUrl = buildShareUrl(shareKey);
+      setShareInput(shareUrl);
+      await navigator.clipboard.writeText(shareUrl);
+      setShareMessage("ワークスペース共有リンクをコピーしました。");
+      setSyncStatus("ワークスペース共有キーを作成しました。");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "共有キー作成に失敗しました。";
+      setSyncError(message);
+      setShareMessage("共有キー作成に失敗しました。");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [buildShareUrl, sharePermission, syncSettings]);
+
+  const createPageShare = useCallback(async () => {
+    if (!selectedPage || selectedPage.isTrashed) {
+      setShareMessage("共有できるページを選択してください。");
+      return;
+    }
+    if (!isSyncConfigured(syncSettings)) {
+      setSyncError("同期設定を完了してください。");
+      return;
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+    setShareMessage(null);
+    try {
+      const generated = await callShareApiPost(syncSettings, {
+        action: "generate_share",
+        type: "page",
+        pageId: selectedPage.id,
+        permissions: sharePermission,
+      });
+      if (!generated.ok || !generated.data?.shareKey) {
+        throw new Error(generated.message || "共有キーの生成に失敗しました。");
+      }
+
+      const shareKey = generated.data.shareKey;
+      const snapshot = JSON.stringify(selectedPage);
+      const saved = await callShareApiPost(syncSettings, {
+        action: "save_share",
+        shareKey,
+        data: snapshot,
+      });
+      if (!saved.ok) {
+        throw new Error(saved.message || "共有データの保存に失敗しました。");
+      }
+
+      const now = Date.now();
+      setWorkspace((previous) => {
+        const target = previous.pages[selectedPage.id];
+        if (!target) {
+          return previous;
+        }
+        return {
+          ...previous,
+          pages: {
+            ...previous.pages,
+            [selectedPage.id]: {
+              ...target,
+              shareSettings: {
+                shareKey,
+                scope: "page",
+                  permissions: sharePermission,
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+          },
+        };
+      });
+
+      const shareUrl = buildShareUrl(shareKey);
+      setShareInput(shareUrl);
+      await navigator.clipboard.writeText(shareUrl);
+      setShareMessage("ページ共有リンクをコピーしました。");
+      setSyncStatus("ページ共有キーを作成しました。");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "ページ共有キー作成に失敗しました。";
+      setSyncError(message);
+      setShareMessage("ページ共有キー作成に失敗しました。");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [buildShareUrl, selectedPage, sharePermission, syncSettings]);
+
+  const receiveSharedData = useCallback(async () => {
+    if (!isSyncConfigured(syncSettings)) {
+      setSyncError("同期設定を完了してください。");
+      return;
+    }
+
+    const shareKey = parseShareKeyFromInput(shareInput);
+    if (!shareKey) {
+      setShareMessage("共有キーまたは共有URLを入力してください。");
+      return;
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+    setShareMessage(null);
+    try {
+      const response = await callShareApiGet(syncSettings, shareKey);
+      if (!response.ok || !response.data) {
+        throw new Error(response.message || "共有データの取得に失敗しました。");
+      }
+
+      const record = response.data;
+      const mergePreferred = shareMergeMode === "merge";
+
+      if (record.type === "workspace") {
+        const incomingWorkspace = normalizeWorkspace(JSON.parse(record.data));
+        if (!incomingWorkspace) {
+          throw new Error("共有ワークスペースの形式が不正です。");
+        }
+
+        const nextWorkspace = mergePreferred
+          ? mergeWorkspaces(workspaceRef.current, incomingWorkspace)
+          : incomingWorkspace;
+        setWorkspace(nextWorkspace);
+        setShowTrash(false);
+        setSyncStatus("共有ワークスペースを取り込みました。");
+        setShareMessage(
+          record.permissions === "viewer"
+            ? "読取専用の共有ワークスペースを受信しました。"
+            : "編集可能な共有ワークスペースを受信しました。",
+        );
+        return;
+      }
+
+      const incomingPageRaw = JSON.parse(record.data) as Partial<MemoPage>;
+      const pageId =
+        typeof incomingPageRaw.id === "string" && incomingPageRaw.id
+          ? incomingPageRaw.id
+          : globalThis.crypto?.randomUUID?.() ?? generateShareKey("page");
+
+      setWorkspace((previous) => {
+        const existing = previous.pages[pageId];
+        const now = Date.now();
+        const incomingTitle =
+          typeof incomingPageRaw.title === "string" && incomingPageRaw.title.trim()
+            ? incomingPageRaw.title
+            : "共有ページ";
+        const incomingUpdatedAt =
+          typeof incomingPageRaw.updatedAt === "number" &&
+          Number.isFinite(incomingPageRaw.updatedAt)
+            ? incomingPageRaw.updatedAt
+            : now;
+
+        const normalizedIncoming: MemoPage = {
+          ...createPage(null, incomingTitle, incomingPageRaw.kind === "database" ? "database" : "page"),
+          id: pageId,
+          title: incomingTitle,
+          content:
+            typeof incomingPageRaw.content === "string"
+              ? incomingPageRaw.content
+              : JSON.stringify(defaultContent),
+          updatedAt: incomingUpdatedAt,
+          properties:
+            typeof incomingPageRaw.properties === "object" &&
+            incomingPageRaw.properties !== null
+              ? (incomingPageRaw.properties as Record<string, string>)
+              : {},
+          shareSettings: {
+            shareKey: record.shareKey,
+            scope: "page",
+            permissions: record.permissions,
+            createdAt: now,
+            updatedAt: now,
+          },
+        };
+
+        const shouldUseIncoming =
+          !existing || !mergePreferred || normalizedIncoming.updatedAt >= existing.updatedAt;
+
+        const nextPage = shouldUseIncoming
+          ? {
+              ...normalizedIncoming,
+              parentId: existing ? existing.parentId : null,
+              childrenIds: existing ? existing.childrenIds : [],
+              isTrashed: existing ? existing.isTrashed : false,
+              trashedAt: existing ? existing.trashedAt : null,
+            }
+          : existing;
+
+        const nextPages = {
+          ...previous.pages,
+          [pageId]: nextPage,
+        };
+        const nextRootPageIds = previous.rootPageIds.includes(pageId)
+          ? previous.rootPageIds
+          : [...previous.rootPageIds, pageId];
+
+        return {
+          ...previous,
+          pages: nextPages,
+          rootPageIds: nextRootPageIds,
+          selectedPageId: pageId,
+        };
+      });
+
+      setShowTrash(false);
+      setSyncStatus("共有ページを取り込みました。");
+      setShareMessage(
+        record.permissions === "viewer"
+          ? "読取専用の共有ページを受信しました。"
+          : "編集可能な共有ページを受信しました。",
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "共有データ受信に失敗しました。";
+      setSyncError(message);
+      setShareMessage("共有データ受信に失敗しました。");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [shareInput, shareMergeMode, syncSettings]);
+
+  const copyCurrentShareLink = useCallback(async () => {
+    if (!currentShareSettings?.shareKey) {
+      setShareMessage("共有リンクを作成してください。");
+      return;
+    }
+
+    const shareUrl = buildShareUrl(currentShareSettings.shareKey);
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareInput(shareUrl);
+      setShareMessage("共有リンクをコピーしました。");
+    } catch {
+      setShareMessage("コピーに失敗しました。リンクを手動で使用してください。");
+    }
+  }, [buildShareUrl, currentShareSettings]);
+
+  const updateCurrentSharePermission = useCallback(async () => {
+    if (!currentShareSettings?.shareKey) {
+      setShareMessage("共有を先に作成してください。");
+      return;
+    }
+    if (!isSyncConfigured(syncSettings)) {
+      setSyncError("同期設定を完了してください。");
+      return;
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+    setShareMessage(null);
+    try {
+      const response = await callShareApiPost(syncSettings, {
+        action: "update_share",
+        shareKey: currentShareSettings.shareKey,
+        permissions: sharePermission,
+      });
+      if (!response.ok) {
+        throw new Error(response.message || "共有権限の更新に失敗しました。");
+      }
+
+      const now = Date.now();
+      setWorkspace((previous) => {
+        if (currentShareSettings.scope === "workspace") {
+          return {
+            ...previous,
+            shareSettings: {
+              ...currentShareSettings,
+              permissions: sharePermission,
+              updatedAt: now,
+            },
+          };
+        }
+
+        const targetPageId = selectedPage?.id ?? workspace.selectedPageId;
+        const targetPage = previous.pages[targetPageId];
+        if (!targetPage) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          pages: {
+            ...previous.pages,
+            [targetPageId]: {
+              ...targetPage,
+              shareSettings: {
+                ...currentShareSettings,
+                updatedAt: now,
+              },
+            },
+          },
+        };
+      });
+
+      setShareMessage(
+        sharePermission === "viewer"
+          ? "共有権限を読取専用に変更しました。"
+          : "共有権限を読み書き可能に変更しました。",
+      );
+      setSyncStatus("共有権限を更新しました。");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "共有権限の更新に失敗しました。";
+      setSyncError(message);
+      setShareMessage("共有権限の更新に失敗しました。");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [currentShareSettings, selectedPage, sharePermission, syncSettings, workspace.selectedPageId]);
+
+  const deleteCurrentShare = useCallback(async () => {
+    if (!currentShareSettings?.shareKey) {
+      setShareMessage("削除する共有がありません。");
+      return;
+    }
+    if (!isSyncConfigured(syncSettings)) {
+      setSyncError("同期設定を完了してください。");
+      return;
+    }
+
+    const accepted = window.confirm("この共有を削除します。よろしいですか？");
+    if (!accepted) {
+      return;
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+    setShareMessage(null);
+    try {
+      const response = await callShareApiPost(syncSettings, {
+        action: "delete_share",
+        shareKey: currentShareSettings.shareKey,
+      });
+      if (!response.ok) {
+        throw new Error(response.message || "共有の削除に失敗しました。");
+      }
+
+      setWorkspace((previous) => {
+        if (currentShareSettings.scope === "workspace") {
+          return {
+            ...previous,
+            shareSettings: undefined,
+          };
+        }
+
+        const targetPageId = selectedPage?.id ?? workspace.selectedPageId;
+        const targetPage = previous.pages[targetPageId];
+        if (!targetPage) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          pages: {
+            ...previous.pages,
+            [targetPageId]: {
+              ...targetPage,
+              shareSettings: undefined,
+            },
+          },
+        };
+      });
+
+      if (shareInput.includes(currentShareSettings.shareKey)) {
+        setShareInput("");
+      }
+
+      setShareMessage("共有を削除しました。");
+      setSyncStatus("共有を削除しました。");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "共有の削除に失敗しました。";
+      setSyncError(message);
+      setShareMessage("共有の削除に失敗しました。");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [currentShareSettings, selectedPage, shareInput, syncSettings, workspace.selectedPageId]);
 
 
 
@@ -1594,6 +2268,18 @@ function App() {
       window.clearTimeout(timerId);
     };
   }, [syncGuideCopyMessage]);
+
+  useEffect(() => {
+    if (!shareMessage) {
+      return;
+    }
+    const timerId = window.setTimeout(() => {
+      setShareMessage(null);
+    }, 4000);
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [shareMessage]);
 
 
   useEffect(() => {
@@ -1650,6 +2336,11 @@ function App() {
     activePage && (showTrash ? activePage.isTrashed : !activePage.isTrashed)
       ? activePage
       : null;
+  const effectiveSharePermissions = getEffectiveSharePermissions(
+    workspace,
+    displayedPage,
+  );
+  const canEditWorkspace = effectiveSharePermissions === "editor";
   const syncConfigured = isSyncConfigured(syncSettings);
   const lastSyncLabel = lastSyncAt ? formatDateTime(lastSyncAt) : "未実行";
   const selectedPageIdSet = useMemo(
@@ -1935,7 +2626,9 @@ function App() {
   const actionContext = useMemo(() => ({
     workspace,
     selectedPageId: workspace.selectedPageId,
-    canEditSelected: Boolean(selectedPage && !selectedPage.isTrashed),
+    canEditSelected:
+      Boolean(selectedPage && !selectedPage.isTrashed) && canEditWorkspace,
+    canEditWorkspace,
     addPage,
     renamePage,
     togglePin,
@@ -1950,17 +2643,19 @@ function App() {
     expandAllTreeNodes,
     collapseAllTreeNodes,
     toggleSidebar: () => setIsSidebarCollapsed(prev => !prev),
+    toggleOutline: () => setIsOutlineOpen(prev => !prev),
+    isOutlineOpen,
+    isSidebarCollapsed,
     selectedPageIdSet,
     collapsedPageIds,
     showTrash,
-    focusSearch: () => searchInputRef.current?.focus(),
     exportJson: () => downloadJson(workspace),
-    importJson: () => importInputRef.current?.click(),
     toggleTrashView: () => setShowTrash(prev => !prev),
     openHelp: () => setIsHelpOpen(true),
   }), [
     workspace, 
     selectedPage, 
+    canEditWorkspace,
     addPage, 
     renamePage, 
     togglePin, 
@@ -1976,10 +2671,18 @@ function App() {
     collapseAllTreeNodes,
     selectedPageIdSet,
     collapsedPageIds,
-    showTrash
+    showTrash,
+    isOutlineOpen,
+    isSidebarCollapsed,
   ]);
 
-  useRegisterBuiltInActions(actionContext);
+  const actionExecutionContext = useMemo(() => ({
+    ...actionContext,
+    focusSearch: () => searchInputRef.current?.focus(),
+    importJson: () => importInputRef.current?.click(),
+  }), [actionContext]);
+
+  useRegisterBuiltInActions(actionExecutionContext);
 
   const commandActions = useMemo(() => {
     return registry.getActionsByLocation("command-palette");
@@ -2028,9 +2731,9 @@ function App() {
   }, [commandActions, commandQuery, actionContext, workspace.pages]);
 
   const executeCommand = useCallback(
-    (result: any) => {
+    (result: CommandPaletteResult) => {
       if (result.kind === "action") {
-        result.data.onExecute(actionContext);
+        result.data.onExecute(actionExecutionContext);
       } else if (result.kind === "page") {
         setWorkspace((prev) => ({ ...prev, selectedPageId: result.data.id }));
         setShowTrash(false);
@@ -2038,7 +2741,7 @@ function App() {
       setIsCommandPaletteOpen(false);
       setCommandQuery("");
     },
-    [actionContext],
+    [actionExecutionContext],
   );
 
   useEffect(() => {
@@ -2108,7 +2811,7 @@ function App() {
           disabled={action.isDisabled?.(ctx)}
           className={action.id.includes("delete") || action.id.includes("trash") ? "danger" : ""}
           onClick={() => {
-            action.onExecute(ctx);
+            action.onExecute({ ...actionExecutionContext, targetId });
             setContextMenu(null);
             setIsSidebarToolsOpen(false);
           }}
@@ -2116,7 +2819,7 @@ function App() {
           {typeof action.label === "function" ? action.label(ctx) : action.label}
         </button>
       ));
-  }, [actionContext]);
+  }, [actionContext, actionExecutionContext]);
 
   const pageMenuTarget =
     contextMenu?.target.kind === "page" ? contextMenu.target : null;
@@ -2588,6 +3291,129 @@ function App() {
                         Google同期機能は任意の機能です。設定・公開範囲・権限の管理は利用者の自己責任で行ってください。
                       </p>
                     </div>
+                    <div className="share-tools">
+                      <p className="muted">ユーザー共有（ページ / ワークスペース）</p>
+                      <div className="share-permission-selector" role="group" aria-label="共有権限">
+                        <span className="muted">共有権限</span>
+                        <label>
+                          <input
+                            type="radio"
+                            name="share-permission"
+                            checked={sharePermission === "viewer"}
+                            onChange={() => setSharePermission("viewer")}
+                          />
+                          読取専用
+                        </label>
+                        <label>
+                          <input
+                            type="radio"
+                            name="share-permission"
+                            checked={sharePermission === "editor"}
+                            onChange={() => setSharePermission("editor")}
+                          />
+                          読み書き可能
+                        </label>
+                      </div>
+                      <div className="share-permission-selector" role="group" aria-label="受信方法">
+                        <span className="muted">受信方法</span>
+                        <label>
+                          <input
+                            type="radio"
+                            name="share-merge-mode"
+                            checked={shareMergeMode === "merge"}
+                            onChange={() => setShareMergeMode("merge")}
+                          />
+                          マージ
+                        </label>
+                        <label>
+                          <input
+                            type="radio"
+                            name="share-merge-mode"
+                            checked={shareMergeMode === "overwrite"}
+                            onChange={() => setShareMergeMode("overwrite")}
+                          />
+                          上書き
+                        </label>
+                      </div>
+                      <div className="share-actions">
+                        <button
+                          type="button"
+                          disabled={isSyncing || !selectedPage || selectedPage.isTrashed}
+                          onClick={() => void createPageShare()}
+                        >
+                          現在ページの共有リンク作成
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSyncing}
+                          onClick={() => void createWorkspaceShare()}
+                        >
+                          ワークスペース共有リンク作成
+                        </button>
+                      </div>
+                      <div className="share-management">
+                        <p className="muted">
+                          現在の共有: {currentShareLabel}
+                        </p>
+                        {currentShareSettings ? (
+                          <>
+                            <p className="muted share-key-line">
+                              共有キー: {currentShareSettings.shareKey}
+                            </p>
+                            <p className="muted">
+                              権限: {currentShareSettings.permissions === "viewer" ? "読取専用" : "読み書き可能"}
+                            </p>
+                            <div className="share-actions">
+                              <button
+                                type="button"
+                                disabled={isSyncing}
+                                onClick={() => void copyCurrentShareLink()}
+                              >
+                                共有リンクをコピー
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isSyncing}
+                                onClick={() => void updateCurrentSharePermission()}
+                              >
+                                共有権限を変更
+                              </button>
+                              <button
+                                type="button"
+                                className="danger"
+                                disabled={isSyncing}
+                                onClick={() => void deleteCurrentShare()}
+                              >
+                                共有を削除
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <p className="muted">まだ共有は作成されていません。</p>
+                        )}
+                      </div>
+                      <label>
+                        共有キーまたは共有URL
+                        <input
+                          type="text"
+                          value={shareInput}
+                          onChange={(event) => setShareInput(event.target.value)}
+                          placeholder="page-xxxx または https://.../?share=xxxx"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={isSyncing || !shareInput.trim()}
+                        onClick={() => void receiveSharedData()}
+                      >
+                        共有を受信
+                      </button>
+                      {shareMessage ? (
+                        <p className="muted" aria-live="polite">
+                          {shareMessage}
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
                 </details>
               </section>
@@ -2687,7 +3513,7 @@ function App() {
         </aside>
 
         <main
-          className="editor-area"
+          className={`editor-area${isOutlineOpen && displayedPage && displayedPage.kind !== "database" ? " with-outline" : ""}`}
           onContextMenu={(event) => {
             const target = event.target as HTMLElement;
             if (target.closest(".context-menu, .modal-panel")) {
@@ -2710,35 +3536,66 @@ function App() {
               />
             ) : (
               <>
-                <header className="editor-header">
-                  <h2>
-                    {displayedPage.isPinned ? "📌 " : ""}
-                    {displayedPage.title}
-                  </h2>
-                  <p className="updated-at">
-                    最終更新: {formatDateTime(displayedPage.updatedAt)}
-                  </p>
-                  {displayedPage.isTrashed ? (
-                    <p className="muted">
-                      このページはごみ箱にあります。右クリックメニューから復元できます。
+                <div className="editor-content-area">
+                  <header className="editor-header">
+                    <div className="editor-header-top">
+                      <h2>
+                        {displayedPage.isPinned ? "📌 " : ""}
+                        {displayedPage.title}
+                      </h2>
+                      <button
+                        type="button"
+                        className={`outline-toggle-btn${isOutlineOpen ? " active" : ""}`}
+                        onClick={() => setIsOutlineOpen((prev) => !prev)}
+                        title={isOutlineOpen ? "アウトラインを閉じる" : "アウトラインを開く"}
+                        aria-label={isOutlineOpen ? "アウトラインを閉じる" : "アウトラインを開く"}
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="3" y1="6" x2="15" y2="6" />
+                          <line x1="3" y1="12" x2="21" y2="12" />
+                          <line x1="3" y1="18" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
+                    <p className="updated-at">
+                      最終更新: {formatDateTime(displayedPage.updatedAt)}
                     </p>
-                  ) : null}
-                </header>
-                {displayedPage.parentId && workspace.pages[displayedPage.parentId]?.kind === "database" && (
-                  <PageProperties 
-                    page={displayedPage} 
-                    parentDatabase={workspace.pages[displayedPage.parentId]}
-                    updatePage={updatePage}
+                    {effectiveSharePermissions === "viewer" ? (
+                      <p className="muted">
+                        このページは共有ビューです。編集はできません。
+                      </p>
+                    ) : null}
+                    {displayedPage.isTrashed ? (
+                      <p className="muted">
+                        このページはごみ箱にあります。右クリックメニューから復元できます。
+                      </p>
+                    ) : null}
+                  </header>
+                  {displayedPage.parentId && workspace.pages[displayedPage.parentId]?.kind === "database" && (
+                    <PageProperties 
+                      page={displayedPage} 
+                      parentDatabase={workspace.pages[displayedPage.parentId]}
+                      updatePage={updatePage}
+                    />
+                  )}
+                  <CustomEditor
+                    key={displayedPage.id}
+                    content={displayedPage.content}
+                    readOnly={effectiveSharePermissions === "viewer"}
+                    onContentChange={(content) =>
+                      onPageContentChange(displayedPage.id, content)
+                    }
+                    pages={workspace.pages}
                   />
-                )}
-                <CustomEditor
-                  key={displayedPage.id}
-                  content={displayedPage.content}
-                  onContentChange={(content) =>
-                    onPageContentChange(displayedPage.id, content)
-                  }
-                  pages={workspace.pages}
-                />
+                </div>
+                {isOutlineOpen ? (
+                  <aside className="outline-panel">
+                    <TableOfContents
+                      content={displayedPage.content}
+                      onItemClick={() => {}}
+                    />
+                  </aside>
+                ) : null}
               </>
             )
           ) : (
@@ -2813,7 +3670,10 @@ function App() {
                 type="text"
                 value={commandQuery}
                 placeholder="コマンドを入力（/ か @ で絞り込み）"
-                onChange={(event) => setCommandQuery(event.target.value)}
+                onChange={(event) => {
+                  setCommandQuery(event.target.value);
+                  setCommandSelectedIndex(0);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     const selected = filteredCommands[commandSelectedIndex];
@@ -2840,18 +3700,37 @@ function App() {
                 ) : null}
                 {filteredCommands.map((result, idx) => {
                   const isAction = result.kind === "action";
-                  const item = result.data;
-                  const label = isAction 
-                    ? (typeof (item as any).label === "function" ? (item as any).label(actionContext) : (item as any).label)
-                    : (item as any).title;
-                  const icon = isAction ? "⚡" : "📄";
-                  const description = isAction 
-                    ? (item as any).description 
-                    : `場所: ${getPagePath((item as any).id)} • 最終更新: ${formatDateTime((item as any).updatedAt)}`;
-                  
+                  if (isAction) {
+                    const action = result.data;
+                    const label =
+                      typeof action.label === "function"
+                        ? action.label(actionContext)
+                        : action.label;
+                    return (
+                      <li
+                        key={action.id}
+                        className={commandSelectedIndex === idx ? "selected" : ""}
+                        onMouseEnter={() => setCommandSelectedIndex(idx)}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => executeCommand(result)}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <span style={{ fontSize: "0.8em", opacity: 0.6 }}>⚡</span>
+                            <span>{label}</span>
+                          </div>
+                          {action.shortcut ? <kbd>{action.shortcut}</kbd> : null}
+                        </button>
+                        {action.description ? <p className="muted">{action.description}</p> : null}
+                      </li>
+                    );
+                  }
+
+                  const page = result.data;
                   return (
-                    <li 
-                      key={isAction ? (item as any).id : `page-${(item as any).id}-${idx}`}
+                    <li
+                      key={`page-${page.id}-${idx}`}
                       className={commandSelectedIndex === idx ? "selected" : ""}
                       onMouseEnter={() => setCommandSelectedIndex(idx)}
                     >
@@ -2859,13 +3738,15 @@ function App() {
                         type="button"
                         onClick={() => executeCommand(result)}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ fontSize: '0.8em', opacity: 0.6 }}>{icon}</span>
-                          <span>{label}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <span style={{ fontSize: "0.8em", opacity: 0.6 }}>📄</span>
+                          <span>{page.title}</span>
                         </div>
-                        {isAction && (item as any).shortcut ? <kbd>{(item as any).shortcut}</kbd> : null}
+                        <kbd>{getPagePath(page.id)}</kbd>
                       </button>
-                      {description && <p className="muted">{description}</p>}
+                      <p className="muted">
+                        場所: {getPagePath(page.id)} • 最終更新: {formatDateTime(page.updatedAt)}
+                      </p>
                     </li>
                   );
                 })}

@@ -13,6 +13,7 @@ export function useRegisterBuiltInActions(context: ActionContext) {
         tags: ["new", "root", "page", "ルート", "作成"],
         prefixes: ["/"],
         locations: ["command-palette", "shortcut", "sidebar-tools", "context-menu:sidebar", "context-menu:editor"],
+        isDisabled: () => !context.canEditWorkspace,
         onExecute: () => context.addPage(null),
         order: 10,
       },
@@ -108,6 +109,7 @@ export function useRegisterBuiltInActions(context: ActionContext) {
         tags: ["import", "json", "読み込み"],
         prefixes: ["/"],
         locations: ["command-palette", "sidebar-tools"],
+        isDisabled: () => !context.canEditWorkspace,
         onExecute: () => context.importJson(),
         order: 80,
       },
@@ -297,6 +299,17 @@ export function useRegisterBuiltInActions(context: ActionContext) {
         onExecute: (_ctx) => {
         },
         order: 210,
+      },
+      {
+        id: "toggle-outline",
+        label: (ctx) => ctx.isOutlineOpen ? "アウトラインを閉じる" : "アウトラインを開く",
+        description: "ページの見出し一覧（アウトライン）の表示を切り替えます",
+        shortcut: "Ctrl+Shift+O",
+        tags: ["outline", "toc", "headings", "アウトライン", "目次", "見出し"],
+        prefixes: ["/"],
+        locations: ["command-palette", "shortcut", "sidebar-tools", "context-menu:editor"],
+        onExecute: () => context.toggleOutline(),
+        order: 195,
       }
     ];
 

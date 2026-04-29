@@ -157,10 +157,12 @@ export function CustomEditor({
   content,
   onContentChange,
   pages,
+  readOnly = false,
 }: {
   content: string;
   onContentChange: (content: string) => void;
   pages: Record<string, { id: string; title: string; isTrashed?: boolean }>;
+  readOnly?: boolean;
 }) {
   const colorScheme = useColorScheme();
   const initialContent = useMemo(() => parseContent(content), [content]);
@@ -207,11 +209,31 @@ export function CustomEditor({
     return items;
   };
 
+  useEffect(() => {
+    const handleScrollToBlock = (e: Event) => {
+      const customEvent = e as CustomEvent<{ blockId: string }>;
+      const { blockId } = customEvent.detail;
+      if (blockId && editor) {
+        try {
+          editor.setTextCursorPosition(blockId, "start");
+          editor.focus();
+        } catch (err) {
+          console.warn("Failed to scroll to block:", err);
+        }
+      }
+    };
+    window.addEventListener("polycanva-scroll-to-block", handleScrollToBlock);
+    return () => window.removeEventListener("polycanva-scroll-to-block", handleScrollToBlock);
+  }, [editor]);
+
   return (
     <BlockNoteView
       editor={editor}
+      editable={!readOnly}
       onChange={() => {
-        onContentChange(JSON.stringify(editor.document));
+        if (!readOnly) {
+          onContentChange(JSON.stringify(editor.document));
+        }
       }}
       theme={colorScheme}
       slashMenu={false}

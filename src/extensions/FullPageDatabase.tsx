@@ -21,8 +21,33 @@ import type {
 } from "../App";
 import dayjs from "dayjs";
 
+type DatabasePageLike = {
+  id: string;
+  title: string;
+  properties?: Record<string, string>;
+  isTrashed?: boolean;
+  kind?: "page" | "database";
+  parentId?: string | null;
+  childrenIds?: string[];
+  databaseColumns?: Array<DatabaseColumn | string>;
+  databaseViews?: DatabaseView[];
+  currentViewId?: string;
+};
+
+type WorkspaceLike = {
+  pages: Record<string, DatabasePageLike>;
+};
+
+type UpdatePageFn = (pageId: string, updates: Record<string, unknown>) => void;
+type UpdateCellFn = (pageId: string, colId: string, value: string | boolean) => void;
+type UpdateColumnFn = (index: number, updates: Partial<DatabaseColumn>) => void;
+type AddPageFn = (pageId: string, properties?: Record<string, string>) => void;
+type DeletePageFn = (pageId: string) => void;
+type RemoveColumnFn = (index: number) => void;
+type AddColumnFn = () => void;
+
 // --- Helpers ---
-const calculateFormula = (row: any, col: DatabaseColumn, columns: DatabaseColumn[], visited = new Set<string>()) => {
+const calculateFormula = (row: DatabasePageLike, col: DatabaseColumn, columns: DatabaseColumn[], visited = new Set<string>()) => {
   if (!col.formula || visited.has(col.id)) return "Circular!";
   visited.add(col.id);
 
@@ -42,7 +67,7 @@ const calculateFormula = (row: any, col: DatabaseColumn, columns: DatabaseColumn
   });
 
   try {
-    const result = eval(expression);
+    const result = Function(`"use strict"; return (${expression});`)();
     return String(result);
   } catch {
     return "Error";
@@ -66,7 +91,9 @@ const getIconForType = (type: DatabaseColumnType) => {
 
 // --- Sub-components ---
 
-const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = "unstyled", readOnly = false }: { rowPage: any, col: DatabaseColumn, columns: DatabaseColumn[], workspace: any, updateCell: any, variant?: string, readOnly?: boolean }) => {
+type InputVariant = React.ComponentProps<typeof DebouncedInput>["variant"];
+
+const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = "unstyled", readOnly = false }: { rowPage: DatabasePageLike, col: DatabaseColumn, columns: DatabaseColumn[], workspace: WorkspaceLike, updateCell: UpdateCellFn, variant?: InputVariant, readOnly?: boolean }) => {
   const value = rowPage.properties?.[col.id] || "";
 
   if (col.type === 'formula') {
@@ -87,7 +114,7 @@ const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = 
     case "number":
       return (
         <DebouncedInput
-          variant={variant as any}
+          variant={variant}
           value={value}
           onChange={(v) => !readOnly && updateCell(rowPage.id, col.id, v)}
           placeholder="..."
@@ -98,7 +125,7 @@ const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = 
     case "date":
        return (
          <DatePickerInput
-           variant={variant as any}
+           variant={variant}
            value={value ? dayjs(value).toDate() : null}
            onChange={(d) => !readOnly && updateCell(rowPage.id, col.id, d ? dayjs(d).format("YYYY-MM-DD") : "")}
            placeholder="..."
@@ -109,7 +136,7 @@ const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = 
     case "select":
       return (
         <MantineSelect
-          variant={variant as any}
+          variant={variant}
           data={col.options || []}
           value={value}
           onChange={(v) => {
@@ -126,7 +153,7 @@ const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = 
       try { selected = JSON.parse(value || "[]"); } catch { selected = value ? value.split(",") : []; }
       return (
         <MantineMultiSelect
-          variant={variant as any}
+          variant={variant}
           data={col.options || []}
           value={selected}
           onChange={(v) => !readOnly && updateCell(rowPage.id, col.id, JSON.stringify(v))}
@@ -139,14 +166,14 @@ const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = 
     case "relation":
       const relatedDbId = col.relatedDatabaseId;
       const relatedDb = relatedDbId ? workspace.pages[relatedDbId] : null;
-      const relatedPages = relatedDb ? (relatedDb.childrenIds || []).map((id: string) => workspace.pages[id]).filter((p: any) => p && !p.isTrashed) : [];
-      const relationData = relatedPages.map((p: any) => ({ label: p.title || "無題", value: p.id }));
+      const relatedPages = relatedDb ? (relatedDb.childrenIds || []).map((id: string) => workspace.pages[id]).filter((p): p is DatabasePageLike => Boolean(p && !p.isTrashed)) : [];
+      const relationData = relatedPages.map((p) => ({ label: p.title || "無題", value: p.id }));
       let selectedRelations: string[] = [];
       try { selectedRelations = JSON.parse(value || "[]"); } catch { selectedRelations = value ? [value] : []; }
       
       return (
         <MantineMultiSelect
-          variant={variant as any}
+          variant={variant}
           data={relationData}
           value={selectedRelations}
           onChange={(v) => !readOnly && updateCell(rowPage.id, col.id, JSON.stringify(v))}
@@ -159,7 +186,7 @@ const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = 
     default:
       return (
         <DebouncedInput
-          variant={variant as any}
+          variant={variant}
           value={value}
           onChange={(v) => !readOnly && updateCell(rowPage.id, col.id, v)}
           placeholder="..."
@@ -170,16 +197,29 @@ const PropertyCell = ({ rowPage, col, columns, workspace, updateCell, variant = 
   }
 };
 
-const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePage, deletePage, addPage, updateColumn, addColumn, removeColumn, updateCell, pageId }: any) => {
+const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePage, deletePage, addPage, updateColumn, addColumn, removeColumn, updateCell, pageId }: {
+  columns: DatabaseColumn[];
+  visibleColumns: DatabaseColumn[];
+  rows: DatabasePageLike[];
+  workspace: WorkspaceLike;
+  updatePage: UpdatePageFn;
+  deletePage: DeletePageFn;
+  addPage: AddPageFn;
+  updateColumn: UpdateColumnFn;
+  addColumn: AddColumnFn;
+  removeColumn: RemoveColumnFn;
+  updateCell: UpdateCellFn;
+  pageId: string;
+}) => {
   const calculateSummary = (col: DatabaseColumn) => {
     if (col.type === 'number' || col.type === 'formula') {
-      const vals = rows.map((r: any) => {
+      const vals = rows.map((r) => {
           const v = col.type === 'formula' ? calculateFormula(r, col, columns) : (r.properties?.[col.id] || "0");
           return Number(v);
-      }).filter((n: any) => !isNaN(n));
+      }).filter((n) => !isNaN(n));
       
       if (vals.length === 0) return "合計: 0";
-      const sum = vals.reduce((a: any, b: any) => a + b, 0);
+      const sum = vals.reduce((a, b) => a + b, 0);
       return `合計: ${sum.toLocaleString()}`;
     }
     return `個数: ${rows.length}`;
@@ -191,7 +231,7 @@ const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePag
         <Box style={{ borderBottom: "1px solid var(--mantine-color-gray-3)", borderRight: "1px solid var(--mantine-color-gray-3)", padding: "10px 16px", backgroundColor: "var(--mantine-color-gray-1)" }}>
           <Text fw={700} size="xs" c="dimmed" tt="uppercase">タイトル</Text>
         </Box>
-        {visibleColumns.map((col: any) => (
+        {visibleColumns.map((col) => (
            <Box key={col.id} style={{ borderBottom: "1px solid var(--mantine-color-gray-3)", borderRight: "1px solid var(--mantine-color-gray-3)", padding: "4px 8px", backgroundColor: "var(--mantine-color-gray-1)" }}>
              <Group wrap="nowrap" gap="xs" justify="space-between">
                <Menu shadow="md" width={220} position="bottom-start" closeOnItemClick={false}>
@@ -205,7 +245,7 @@ const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePag
                  <Menu.Dropdown>
                    <Menu.Label>プロパティ名</Menu.Label>
                    <Box p="xs">
-                     <DebouncedInput size="xs" value={col.name} onChange={(v) => updateColumn(columns.findIndex((c: any) => c.id === col.id), { name: v })} />
+                     <DebouncedInput size="xs" value={col.name} onChange={(v) => updateColumn(columns.findIndex((c) => c.id === col.id), { name: v })} />
                    </Box>
                    {(col.type === "select" || col.type === "multi-select") && (
                      <>
@@ -215,7 +255,7 @@ const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePag
                            size="xs" 
                            placeholder="例: 未着手, 進行中, 完了"
                            value={col.options?.join(", ") || ""} 
-                           onChange={(v) => updateColumn(columns.findIndex((c: any) => c.id === col.id), { options: v.split(",").map(s => s.trim()).filter(Boolean) })}
+                           onChange={(v) => updateColumn(columns.findIndex((c) => c.id === col.id), { options: v.split(",").map(s => s.trim()).filter(Boolean) })}
                          />
                        </Box>
                      </>
@@ -228,21 +268,21 @@ const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePag
                             size="xs" 
                             placeholder="数式を入力..."
                             value={col.formula || ""} 
-                            onChange={(v) => updateColumn(columns.findIndex((c: any) => c.id === col.id), { formula: v })}
+                            onChange={(v) => updateColumn(columns.findIndex((c) => c.id === col.id), { formula: v })}
                           />
                         </Box>
                       </>
                    )}
                    <Menu.Divider />
                    <Menu.Label>種類</Menu.Label>
-                   <Menu.Item leftSection={<IconAbc size={14}/>} onClick={() => updateColumn(columns.findIndex((c: any) => c.id === col.id), { type: "text" })}>テキスト</Menu.Item>
-                   <Menu.Item leftSection={<IconNumbers size={14}/>} onClick={() => updateColumn(columns.findIndex((c: any) => c.id === col.id), { type: "number" })}>数値</Menu.Item>
-                   <Menu.Item leftSection={<IconList size={14}/>} onClick={() => updateColumn(columns.findIndex((c: any) => c.id === col.id), { type: "select" })}>セレクト</Menu.Item>
-                   <Menu.Item leftSection={<IconTag size={14}/>} onClick={() => updateColumn(columns.findIndex((c: any) => c.id === col.id), { type: "multi-select" })}>マルチセレクト</Menu.Item>
-                   <Menu.Item leftSection={<IconCircleCheck size={14}/>} onClick={() => updateColumn(columns.findIndex((c: any) => c.id === col.id), { type: "checkbox" })}>チェックボックス</Menu.Item>
-                   <Menu.Item leftSection={<IconCalendar size={14}/>} onClick={() => updateColumn(columns.findIndex((c: any) => c.id === col.id), { type: "date" })}>日付</Menu.Item>
-                   <Menu.Item leftSection={<IconFunction size={14}/>} onClick={() => updateColumn(columns.findIndex((c: any) => c.id === col.id), { type: "formula" })}>関数</Menu.Item>
-                   <Menu.Item leftSection={<IconLink size={14}/>} onClick={() => updateColumn(columns.findIndex((c: any) => c.id === col.id), { type: "relation" })}>リレーション</Menu.Item>
+                   <Menu.Item leftSection={<IconAbc size={14}/>} onClick={() => updateColumn(columns.findIndex((c) => c.id === col.id), { type: "text" })}>テキスト</Menu.Item>
+                   <Menu.Item leftSection={<IconNumbers size={14}/>} onClick={() => updateColumn(columns.findIndex((c) => c.id === col.id), { type: "number" })}>数値</Menu.Item>
+                   <Menu.Item leftSection={<IconList size={14}/>} onClick={() => updateColumn(columns.findIndex((c) => c.id === col.id), { type: "select" })}>セレクト</Menu.Item>
+                   <Menu.Item leftSection={<IconTag size={14}/>} onClick={() => updateColumn(columns.findIndex((c) => c.id === col.id), { type: "multi-select" })}>マルチセレクト</Menu.Item>
+                   <Menu.Item leftSection={<IconCircleCheck size={14}/>} onClick={() => updateColumn(columns.findIndex((c) => c.id === col.id), { type: "checkbox" })}>チェックボックス</Menu.Item>
+                   <Menu.Item leftSection={<IconCalendar size={14}/>} onClick={() => updateColumn(columns.findIndex((c) => c.id === col.id), { type: "date" })}>日付</Menu.Item>
+                   <Menu.Item leftSection={<IconFunction size={14}/>} onClick={() => updateColumn(columns.findIndex((c) => c.id === col.id), { type: "formula" })}>関数</Menu.Item>
+                   <Menu.Item leftSection={<IconLink size={14}/>} onClick={() => updateColumn(columns.findIndex((c) => c.id === col.id), { type: "relation" })}>リレーション</Menu.Item>
                    {col.type === 'relation' && (
                      <>
                        <Menu.Divider />
@@ -251,15 +291,15 @@ const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePag
                          <MantineSelect 
                             size="xs" 
                             placeholder="データベースを選択"
-                            data={Object.values(workspace.pages).filter((p: any) => p.kind === 'database' && p.id !== pageId && !p.isTrashed).map((p: any) => ({ label: p.title, value: p.id }))}
+                            data={Object.values(workspace.pages).filter((p) => p.kind === 'database' && p.id !== pageId && !p.isTrashed).map((p) => ({ label: p.title, value: p.id }))}
                             value={col.relatedDatabaseId || ""}
-                            onChange={(v) => updateColumn(columns.findIndex((c: any) => c.id === col.id), { relatedDatabaseId: v || undefined })}
+                            onChange={(v) => updateColumn(columns.findIndex((c) => c.id === col.id), { relatedDatabaseId: v || undefined })}
                          />
                        </Box>
                      </>
                    )}
                    <Menu.Divider />
-                   <Menu.Item color="red" leftSection={<IconTrash size={14}/>} onClick={() => removeColumn(columns.findIndex((c: any) => c.id === col.id))}>削除</Menu.Item>
+                   <Menu.Item color="red" leftSection={<IconTrash size={14}/>} onClick={() => removeColumn(columns.findIndex((c) => c.id === col.id))}>削除</Menu.Item>
                  </Menu.Dropdown>
                </Menu>
              </Group>
@@ -269,7 +309,7 @@ const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePag
           <ActionIcon onClick={addColumn} variant="subtle" color="gray"><IconPlus size={16}/></ActionIcon>
         </Box>
 
-        {rows.map((rowPage: any) => (
+        {rows.map((rowPage) => (
           <React.Fragment key={rowPage.id}>
             <Box style={{ borderBottom: "1px solid var(--mantine-color-gray-2)", borderRight: "1px solid var(--mantine-color-gray-2)", padding: "0 4px", display: "flex", alignItems: "center" }}>
               <DebouncedInput
@@ -281,7 +321,7 @@ const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePag
                   styles={{ input: { padding: "8px 12px", cursor: "text" } }}
               />
             </Box>
-            {visibleColumns.map((col: any) => (
+            {visibleColumns.map((col) => (
               <Box key={col.id} style={{ borderBottom: "1px solid var(--mantine-color-gray-2)", borderRight: "1px solid var(--mantine-color-gray-2)" }}>
                  <PropertyCell rowPage={rowPage} col={col} columns={columns} workspace={workspace} updateCell={updateCell} />
               </Box>
@@ -295,7 +335,7 @@ const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePag
         <Box style={{ borderTop: "2px solid var(--mantine-color-gray-3)", borderRight: "1px solid var(--mantine-color-gray-3)", padding: "8px 16px", backgroundColor: "var(--mantine-color-gray-0)" }}>
            <Text size="xs" fw={700} c="dimmed">個数: {rows.length}</Text>
         </Box>
-        {visibleColumns.map((col: any) => (
+        {visibleColumns.map((col) => (
            <Box key={`footer-${col.id}`} style={{ borderTop: "2px solid var(--mantine-color-gray-3)", borderRight: "1px solid var(--mantine-color-gray-3)", padding: "8px 12px", backgroundColor: "var(--mantine-color-gray-0)" }}>
               <Text size="xs" fw={700} c="dimmed">{calculateSummary(col)}</Text>
            </Box>
@@ -309,9 +349,17 @@ const DatabaseTableView = ({ columns, visibleColumns, rows, workspace, updatePag
   );
 };
 
-const DatabaseListView = ({ rows, visibleColumns, columns, updatePage, deletePage, addPage, pageId }: any) => (
+const DatabaseListView = ({ rows, visibleColumns, columns, updatePage, deletePage, addPage, pageId }: {
+  rows: DatabasePageLike[];
+  visibleColumns: DatabaseColumn[];
+  columns: DatabaseColumn[];
+  updatePage: UpdatePageFn;
+  deletePage: DeletePageFn;
+  addPage: AddPageFn;
+  pageId: string;
+}) => (
   <Stack gap="xs">
-    {rows.map((row: any) => (
+    {rows.map((row) => (
       <Paper key={row.id} withBorder p="sm" radius="md" shadow="xs">
         <Group justify="space-between">
           <Group gap="md">
@@ -324,7 +372,7 @@ const DatabaseListView = ({ rows, visibleColumns, columns, updatePage, deletePag
               style={{ fontSize: 16 }}
             />
             <Group gap="xs">
-              {visibleColumns.map((col: any) => {
+              {visibleColumns.map((col) => {
                 let val = col.type === 'formula' ? calculateFormula(row, col, columns) : (row.properties?.[col.id]);
                 if (!val || col.type === "checkbox") return null;
                 if (col.type === 'multi-select') {
@@ -342,22 +390,32 @@ const DatabaseListView = ({ rows, visibleColumns, columns, updatePage, deletePag
   </Stack>
 );
 
-const DatabaseKanbanView = ({ rows, visibleColumns, columns, currentView, updatePage, addPage, pageId, updateCell }: any) => {
-  const groupby = currentView.groupByColumnId || columns.find((c: any) => (c.type === "select" || c.type === "checkbox"))?.id || "status";
-  const groupCol = columns.find((c: any) => c.id === groupby);
+const DatabaseKanbanView = ({ rows, visibleColumns, columns, currentView, updatePage, addPage, pageId, updateCell }: {
+  rows: DatabasePageLike[];
+  visibleColumns: DatabaseColumn[];
+  columns: DatabaseColumn[];
+  currentView: DatabaseView;
+  updateCurrentView: (updates: Partial<DatabaseView>) => void;
+  updatePage: UpdatePageFn;
+  addPage: AddPageFn;
+  pageId: string;
+  updateCell: UpdateCellFn;
+}) => {
+  const groupby = currentView.groupByColumnId || columns.find((c) => (c.type === "select" || c.type === "checkbox"))?.id || "status";
+  const groupCol = columns.find((c) => c.id === groupby);
   
   let groups: { label: string, value: string }[] = [];
   if (groupCol?.type === "select" || groupCol?.type === "multi-select") {
-    groups = (groupCol.options || []).map((o: any) => ({ label: o, value: o }));
+    groups = (groupCol.options || []).map((o) => ({ label: o, value: o }));
     groups.push({ label: "未設定", value: "" });
   } else if (groupCol?.type === "checkbox") {
     groups = [{ label: "完了", value: "true" }, { label: "未完了", value: "false" }];
   } else {
-    const values = Array.from(new Set(rows.map((r: any) => r.properties?.[groupby] || "")));
-    groups = values.map((v: any) => ({ label: v || "未設定", value: v || "" }));
+    const values = Array.from(new Set(rows.map((r) => r.properties?.[groupby] || "")));
+    groups = values.map((v) => ({ label: v || "未設定", value: v || "" }));
   }
 
-  const onDragEnd = (result: any) => {
+  const onDragEnd = (result: { destination?: { droppableId: string } | null; draggableId: string }) => {
     if (!result.destination) return;
     const { draggableId, destination } = result;
     const newValue = destination.droppableId;
@@ -379,7 +437,7 @@ const DatabaseKanbanView = ({ rows, visibleColumns, columns, currentView, update
                   <Group gap="xs">
                     <Text fw={700} size="sm">{group.label}</Text>
                     <Badge variant="filled" color="gray" size="xs">
-                      {rows.filter((r: any) => {
+                      {rows.filter((r) => {
                           const val = r.properties?.[groupby] || "";
                           if (groupCol?.type === 'multi-select') return val.includes(group.value);
                           return val === group.value;
@@ -389,12 +447,12 @@ const DatabaseKanbanView = ({ rows, visibleColumns, columns, currentView, update
                 </Group>
                 <Box style={{ flex: 1, minHeight: 100 }}>
                   {rows
-                    .filter((r: any) => {
+                    .filter((r) => {
                         const val = r.properties?.[groupby] || "";
                         if (groupCol?.type === 'multi-select') return val.includes(group.value);
                         return val === group.value;
                     })
-                    .map((row: any, index: number) => (
+                    .map((row, index: number) => (
                       <Draggable key={row.id} draggableId={row.id} index={index}>
                         {(provided, snapshot) => (
                           <Box 
@@ -413,7 +471,7 @@ const DatabaseKanbanView = ({ rows, visibleColumns, columns, currentView, update
                               mb="xs"
                             />
                             <Stack gap={4}>
-                              {visibleColumns.filter((c: any) => c.id !== groupby).slice(0, 3).map((c: any) => {
+                              {visibleColumns.filter((c) => c.id !== groupby).slice(0, 3).map((c) => {
                                 let val = c.type === 'formula' ? calculateFormula(row, c, columns) : (row.properties?.[c.id] || "...");
                                 if (c.type === 'multi-select') { try { val = JSON.parse(val).join(", "); } catch { /* ignore */ } }
                                 if (c.type === 'relation') { try { val = `🔗 ${JSON.parse(val).length} items`; } catch { val = '🔗 0 items'; } }
@@ -443,9 +501,19 @@ const DatabaseKanbanView = ({ rows, visibleColumns, columns, currentView, update
   );
 };
 
-const DatabaseGalleryView = ({ rows, visibleColumns, columns, workspace, updatePage, deletePage, addPage, updateCell, pageId }: any) => (
+const DatabaseGalleryView = ({ rows, visibleColumns, columns, workspace, updatePage, deletePage, addPage, updateCell, pageId }: {
+  rows: DatabasePageLike[];
+  visibleColumns: DatabaseColumn[];
+  columns: DatabaseColumn[];
+  workspace: WorkspaceLike;
+  updatePage: UpdatePageFn;
+  deletePage: DeletePageFn;
+  addPage: AddPageFn;
+  updateCell: UpdateCellFn;
+  pageId: string;
+}) => (
   <Box className="gallery-grid">
-    {rows.map((row: any) => (
+    {rows.map((row) => (
       <Card key={row.id} className="gallery-card" withBorder padding="md">
         <Card.Section withBorder inheritPadding py="xs">
           <DebouncedInput
@@ -457,7 +525,7 @@ const DatabaseGalleryView = ({ rows, visibleColumns, columns, workspace, updateP
           />
         </Card.Section>
         <Stack mt="md" gap="xs">
-          {visibleColumns.slice(0, 4).map((c: any) => (
+          {visibleColumns.slice(0, 4).map((c) => (
             <Group key={c.id} justify="space-between" gap="xs">
               <Group gap="xs" wrap="nowrap" style={{ flex: '0 0 auto' }}>
                 {getIconForType(c.type)}
@@ -483,8 +551,15 @@ const DatabaseGalleryView = ({ rows, visibleColumns, columns, workspace, updateP
   </Box>
 );
 
-const DatabaseCalendarView = ({ rows, columns, currentView, updateCurrentView, addPage, pageId }: any) => {
-  const dateColId = currentView.calendarDateColumnId || columns.find((c: any) => c.type === 'date')?.id || "date";
+const DatabaseCalendarView = ({ rows, columns, currentView, updateCurrentView, addPage, pageId }: {
+  rows: DatabasePageLike[];
+  columns: DatabaseColumn[];
+  currentView: DatabaseView;
+  updateCurrentView: (updates: Partial<DatabaseView>) => void;
+  addPage: AddPageFn;
+  pageId: string;
+}) => {
+  const dateColId = currentView.calendarDateColumnId || columns.find((c) => c.type === 'date')?.id || "date";
   const [viewMonth, setViewMonth] = useState(new Date());
 
   const startDate = dayjs(viewMonth).startOf('month').startOf('week');
@@ -502,7 +577,7 @@ const DatabaseCalendarView = ({ rows, columns, currentView, updateCurrentView, a
       <Group justify="space-between" p="md" style={{ borderBottom: '1px solid var(--mantine-color-gray-3)' }}>
          <Group>
            <Text fw={700} size="lg">{dayjs(viewMonth).format("YYYY年 MM月")}</Text>
-           <MantineSelect size="xs" placeholder="日付項目を選択" data={columns.filter((c: any) => c.type === 'date').map((c: any) => ({ label: c.name, value: c.id }))} value={dateColId} onChange={v => v && updateCurrentView({ calendarDateColumnId: v })} />
+           <MantineSelect size="xs" placeholder="日付項目を選択" data={columns.filter((c) => c.type === 'date').map((c) => ({ label: c.name, value: c.id }))} value={dateColId} onChange={v => v && updateCurrentView({ calendarDateColumnId: v })} />
          </Group>
          <Group gap={4}>
            <ActionIcon variant="subtle" color="gray" onClick={() => setViewMonth(dayjs(viewMonth).subtract(1, 'month').toDate())}><IconChevronLeft size={16}/></ActionIcon>
@@ -521,14 +596,14 @@ const DatabaseCalendarView = ({ rows, columns, currentView, updateCurrentView, a
         {days.map((d, i) => {
           const isToday = d.isSame(dayjs(), 'day');
           const isSameMonth = d.isSame(dayjs(viewMonth), 'month');
-          const dayRows = rows.filter((r: any) => d.isSame(dayjs(r.properties?.[dateColId]), 'day'));
+          const dayRows = rows.filter((r) => d.isSame(dayjs(r.properties?.[dateColId]), 'day'));
           return (
             <Box key={i} p="xs" style={{ borderRight: '1px solid var(--mantine-color-gray-2)', borderBottom: '1px solid var(--mantine-color-gray-2)', backgroundColor: isSameMonth ? 'transparent' : 'var(--mantine-color-gray-0)' }}>
                <Group justify="end" mb={4}>
                   <Text size="xs" fw={isToday ? 800 : 400} c={isToday ? 'blue' : (isSameMonth ? 'inherit' : 'gray.5')} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', backgroundColor: isToday ? 'var(--mantine-color-blue-1)' : 'transparent' }}>{d.date()}</Text>
                </Group>
                <Stack gap={4}>
-                 {dayRows.map((r: any) => (
+                 {dayRows.map((r) => (
                    <Tooltip key={r.id} label={r.title}>
                      <Box p={4} style={{ backgroundColor: 'var(--mantine-color-blue-0)', border: '1px solid var(--mantine-color-blue-2)', borderRadius: 4, cursor: 'pointer' }}>
                        <Text size="xs" truncate fw={500}>{r.title}</Text>
@@ -545,9 +620,15 @@ const DatabaseCalendarView = ({ rows, columns, currentView, updateCurrentView, a
   );
 };
 
-const DatabaseTimelineView = ({ rows, columns, currentView, updateCurrentView, updatePage }: any) => {
-  const startColId = currentView.timelineStartColumnId || columns.find((c: any) => c.type === 'date')?.id || "start_date";
-  const endColId = currentView.timelineEndColumnId || columns.find((c: any) => c.type === 'date' && c.id !== startColId)?.id || "end_date";
+const DatabaseTimelineView = ({ rows, columns, currentView, updateCurrentView, updatePage }: {
+  rows: DatabasePageLike[];
+  columns: DatabaseColumn[];
+  currentView: DatabaseView;
+  updateCurrentView: (updates: Partial<DatabaseView>) => void;
+  updatePage: UpdatePageFn;
+}) => {
+  const startColId = currentView.timelineStartColumnId || columns.find((c) => c.type === 'date')?.id || "start_date";
+  const endColId = currentView.timelineEndColumnId || columns.find((c) => c.type === 'date' && c.id !== startColId)?.id || "end_date";
   
   const [viewDate, setViewDate] = useState(new Date());
   const daysToShow = 30;
@@ -561,8 +642,8 @@ const DatabaseTimelineView = ({ rows, columns, currentView, updateCurrentView, u
         <Group>
           <Text fw={700} size="lg">{dayjs(viewDate).format("YYYY年 MM月")}</Text>
           <Group gap="xs">
-            <MantineSelect size="xs" placeholder="開始日" data={columns.filter((c: any) => c.type === 'date').map((c: any) => ({ label: c.name, value: c.id }))} value={startColId} onChange={v => v && updateCurrentView({ timelineStartColumnId: v })} />
-            <MantineSelect size="xs" placeholder="終了日" data={columns.filter((c: any) => c.type === 'date').map((c: any) => ({ label: c.name, value: c.id }))} value={endColId} onChange={v => v && updateCurrentView({ timelineEndColumnId: v })} />
+            <MantineSelect size="xs" placeholder="開始日" data={columns.filter((c) => c.type === 'date').map((c) => ({ label: c.name, value: c.id }))} value={startColId} onChange={v => v && updateCurrentView({ timelineStartColumnId: v })} />
+            <MantineSelect size="xs" placeholder="終了日" data={columns.filter((c) => c.type === 'date').map((c) => ({ label: c.name, value: c.id }))} value={endColId} onChange={v => v && updateCurrentView({ timelineEndColumnId: v })} />
           </Group>
         </Group>
         <Group gap={4}>
@@ -589,7 +670,7 @@ const DatabaseTimelineView = ({ rows, columns, currentView, updateCurrentView, u
 
           {/* Timeline Body */}
           <Stack gap={0}>
-            {rows.map((row: any) => {
+            {rows.map((row) => {
               const start = row.properties?.[startColId] ? dayjs(row.properties?.[startColId]) : null;
               const end = row.properties?.[endColId] ? dayjs(row.properties?.[endColId]) : start;
               
@@ -650,11 +731,11 @@ const DatabaseTimelineView = ({ rows, columns, currentView, updateCurrentView, u
 };
 
 interface FullPageDatabaseProps {
-  page: any;
-  workspace: any;
-  updatePage: (pageId: string, updates: any) => void;
-  addPage: (parentId: string | null, properties?: Record<string, string>) => void;
-  deletePage: (pageId: string) => void;
+  page: DatabasePageLike;
+  workspace: WorkspaceLike;
+  updatePage: UpdatePageFn;
+  addPage: AddPageFn;
+  deletePage: DeletePageFn;
 }
 
 // --- Main Component ---
@@ -663,7 +744,7 @@ export const FullPageDatabase: React.FC<FullPageDatabaseProps> = ({ page, worksp
   const [searchQuery, setSearchQuery] = useState("");
   const columns: DatabaseColumn[] = useMemo(() => {
     const rawColumns = page.databaseColumns || [];
-    return rawColumns.map((col: any) => {
+    return rawColumns.map((col) => {
       if (typeof col === "string") {
         return { id: col, name: col, type: "text" } as DatabaseColumn;
       }
@@ -675,7 +756,7 @@ export const FullPageDatabase: React.FC<FullPageDatabaseProps> = ({ page, worksp
   const currentViewId = page.currentViewId || views[0]?.id;
   const currentView = views.find(v => v.id === currentViewId) || views[0];
 
-  const rawRows = (page.childrenIds || []).map((id: string) => workspace.pages[id]).filter((p: any) => p && !p.isTrashed);
+  const rawRows = (page.childrenIds || []).map((id: string) => workspace.pages[id]).filter((p): p is DatabasePageLike => Boolean(p && !p.isTrashed));
 
   const filteredAndSortedRows = useMemo(() => {
     let result = [...rawRows];
@@ -722,7 +803,7 @@ export const FullPageDatabase: React.FC<FullPageDatabaseProps> = ({ page, worksp
         const inTitle = row.title.toLowerCase().includes(q);
         const inProps = Object.keys(row.properties || {}).some(colId => {
           const col = columns.find(c => c.id === colId);
-          let val = row.properties[colId];
+          let val = row.properties?.[colId] || "";
           if (col?.type === 'formula') val = calculateFormula(row, col, columns);
           return String(val).toLowerCase().includes(q);
         });
@@ -743,7 +824,7 @@ export const FullPageDatabase: React.FC<FullPageDatabaseProps> = ({ page, worksp
   const removeColumn = (index: number) => {
     const newCols = [...columns]; newCols.splice(index, 1); updateColumns(newCols);
   };
-  const updateCell = (rowPageId: string, colId: string, value: any) => {
+  const updateCell = (rowPageId: string, colId: string, value: string | boolean) => {
     const rowPage = workspace.pages[rowPageId]; if (!rowPage) return;
     updatePage(rowPageId, { properties: { ...rowPage.properties, [colId]: String(value) } });
   };
